@@ -1,0 +1,282 @@
+"""Phase 5: Call tracing for Axon.
+
+Takes FileParseData from the parser phase and resolves call expressions to
+target symbol nodes, creating CALLS relationships with confidence scores.
+
+Resolution priority:
+1. Same-file exact match (confidence 1.0)
+2. Import-resolved match (confidence 1.0)
+3. Global fuzzy match (confidence 0.5)
+"""
+
+from __future__ import annotations
+
+import logging
+
+from axon.core.graph.graph import KnowledgeGraph
+from axon.core.graph.model import (
+    GraphRelationship,
+    NodeLabel,
+    RelType,
+    generate_id,
+)
+from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.symbol_lookup import build_file_symbol_index, find_containing_symbol
+from axon.core.parsers.base import CallInfo
+
+logger = logging.getLogger(__name__)
+
+# Labels eligible as call targets.
+_CALLABLE_LABELS: tuple[NodeLabel, ...] = (
+    NodeLabel.FUNCTION,
+    NodeLabel.METHOD,
+    NodeLabel.CLASS,
+)
+
+
+# ---------------------------------------------------------------------------
+# Call index
+# ---------------------------------------------------------------------------
+
+
+def build_call_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
+    """Build a mapping from symbol names to their node IDs.
+
+    Includes Function, Method, and Class nodes.  Classes are included
+    because constructor calls (e.g. ``User()``) target the class node.
+
+    Args:
+        graph: The knowledge graph containing parsed symbol nodes.
+
+    Returns:
+        A dict mapping symbol name to a list of node IDs.  Multiple
+        symbols can share the same name across different files.
+    """
+    index: dict[str, list[str]] = {}
+    for label in _CALLABLE_LABELS:
+        for node in graph.get_nodes_by_label(label):
+            index.setdefault(node.name, []).append(node.id)
+    return index
+
+
+# ---------------------------------------------------------------------------
+# Call resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_call(
+    call: CallInfo,
+    file_path: str,
+    call_index: dict[str, list[str]],
+    graph: KnowledgeGraph,
+) -> tuple[str | None, float]:
+    """Resolve a call expression to a target node ID and confidence score.
+
+    Resolution strategy (tried in order):
+
+    1. **Same-file exact match** (confidence 1.0) -- the called symbol is
+       defined in the same file as the caller.
+    2. **Import-resolved match** (confidence 1.0) -- the called name was
+       imported into this file; find the symbol in the imported file.
+    3. **Global fuzzy match** (confidence 0.5) -- any symbol with this name
+       anywhere in the codebase.  If multiple matches exist, the one with
+       the shortest file path is chosen (heuristic for proximity).
+
+    For method calls (``call.receiver`` is non-empty):
+    - If the receiver is ``"self"`` or ``"this"``, look for a method with
+      that name in the same class (same file, matching class_name).
+    - Otherwise, try to resolve the method name globally.
+
+    Args:
+        call: The parsed call information.
+        file_path: Path to the file containing the call.
+        call_index: Mapping from symbol names to node IDs built by
+            :func:`build_call_index`.
+        graph: The knowledge graph.
+
+    Returns:
+        A tuple of ``(node_id, confidence)`` or ``(None, 0.0)`` if the
+        call cannot be resolved.
+    """
+    name = call.name
+    receiver = call.receiver
+
+    # Method calls with self/this receiver: look within the same class.
+    if receiver in ("self", "this"):
+        result = _resolve_self_method(name, file_path, call_index, graph)
+        if result is not None:
+            return result, 1.0
+
+    # For other method calls, use the method name for resolution.
+    # The receiver doesn't help us without type information, so we
+    # fall through to the standard resolution chain using the method name.
+
+    candidate_ids = call_index.get(name, [])
+    if not candidate_ids:
+        return None, 0.0
+
+    # 1. Same-file exact match.
+    for nid in candidate_ids:
+        node = graph.get_node(nid)
+        if node is not None and node.file_path == file_path:
+            return nid, 1.0
+
+    # 2. Import-resolved match.
+    imported_target = _resolve_via_imports(name, file_path, candidate_ids, graph)
+    if imported_target is not None:
+        return imported_target, 1.0
+
+    # 3. Global fuzzy match -- prefer shortest file path.
+    return _pick_closest(candidate_ids, graph), 0.5
+
+
+def _resolve_self_method(
+    method_name: str,
+    file_path: str,
+    call_index: dict[str, list[str]],
+    graph: KnowledgeGraph,
+) -> str | None:
+    """Find a method with *method_name* in the same file (same class).
+
+    When the receiver is ``self`` or ``this`` the target must be a Method
+    node defined in the same file.
+    """
+    for nid in call_index.get(method_name, []):
+        node = graph.get_node(nid)
+        if (
+            node is not None
+            and node.label == NodeLabel.METHOD
+            and node.file_path == file_path
+        ):
+            return nid
+    return None
+
+
+def _resolve_via_imports(
+    name: str,
+    file_path: str,
+    candidate_ids: list[str],
+    graph: KnowledgeGraph,
+) -> str | None:
+    """Check if *name* was imported into *file_path* and resolve to the target.
+
+    Looks at IMPORTS relationships originating from this file's File node.
+    For each imported file, checks whether any candidate symbol is defined
+    there.  Also checks the ``symbols`` property to see if the specific
+    name was explicitly imported.
+    """
+    source_file_id = generate_id(NodeLabel.FILE, file_path)
+    import_rels = graph.get_outgoing(source_file_id, RelType.IMPORTS)
+
+    if not import_rels:
+        return None
+
+    # Collect file paths of imported files, optionally filtering by
+    # the imported symbol names.
+    imported_file_ids: set[str] = set()
+    for rel in import_rels:
+        symbols_str = rel.properties.get("symbols", "")
+        imported_names = {s.strip() for s in symbols_str.split(",") if s.strip()}
+
+        # If the specific name was imported, or if it's a wildcard/full
+        # module import (no specific names), include this target file.
+        if not imported_names or name in imported_names:
+            target_node = graph.get_node(rel.target)
+            if target_node is not None:
+                imported_file_ids.add(target_node.file_path)
+
+    # Now check if any candidate symbol lives in an imported file.
+    for nid in candidate_ids:
+        node = graph.get_node(nid)
+        if node is not None and node.file_path in imported_file_ids:
+            return nid
+
+    return None
+
+
+def _pick_closest(candidate_ids: list[str], graph: KnowledgeGraph) -> str | None:
+    """Pick the candidate with the shortest file path (proximity heuristic).
+
+    Returns ``None`` if no candidates can be resolved to actual nodes.
+    """
+    best_id: str | None = None
+    best_path_len = float("inf")
+
+    for nid in candidate_ids:
+        node = graph.get_node(nid)
+        if node is not None and len(node.file_path) < best_path_len:
+            best_path_len = len(node.file_path)
+            best_id = nid
+
+    return best_id
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def process_calls(
+    parse_data: list[FileParseData],
+    graph: KnowledgeGraph,
+) -> None:
+    """Resolve call expressions and create CALLS relationships in the graph.
+
+    For each call expression in the parse data:
+
+    1. Determine which symbol in the file *contains* the call (by line
+       number range).
+    2. Resolve the call to a target symbol node.
+    3. Create a CALLS relationship from the containing symbol to the
+       target, with a ``confidence`` property.
+
+    Skips calls where:
+    - The containing symbol cannot be determined.
+    - The target cannot be resolved.
+    - A relationship with the same ID already exists (deduplication).
+
+    Args:
+        parse_data: File parse results from the parser phase.
+        graph: The knowledge graph to populate with CALLS relationships.
+    """
+    call_index = build_call_index(graph)
+    file_sym_index = build_file_symbol_index(graph, _CALLABLE_LABELS)
+    seen: set[str] = set()
+
+    for fpd in parse_data:
+        for call in fpd.parse_result.calls:
+            # Find which symbol contains this call.
+            source_id = find_containing_symbol(
+                call.line, fpd.file_path, file_sym_index
+            )
+            if source_id is None:
+                logger.debug(
+                    "No containing symbol for call %s at line %d in %s",
+                    call.name,
+                    call.line,
+                    fpd.file_path,
+                )
+                continue
+
+            # Resolve the call target.
+            target_id, confidence = resolve_call(
+                call, fpd.file_path, call_index, graph
+            )
+            if target_id is None:
+                continue
+
+            # Create the CALLS relationship.
+            rel_id = f"calls:{source_id}->{target_id}"
+            if rel_id in seen:
+                continue
+            seen.add(rel_id)
+
+            graph.add_relationship(
+                GraphRelationship(
+                    id=rel_id,
+                    type=RelType.CALLS,
+                    source=source_id,
+                    target=target_id,
+                    properties={"confidence": confidence},
+                )
+            )
