@@ -110,6 +110,8 @@ def analyze(
     # Write meta.json.
     meta = {
         "version": __version__,
+        "name": repo_path.name,
+        "path": str(repo_path),
         "stats": {
             "files": result.files,
             "symbols": result.symbols,

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastembed import TextEmbedding
 
-from axon.core.embeddings.text import generate_text
+from axon.core.embeddings.text import build_class_method_index, generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel
 from axon.core.storage.base import NodeEmbedding
@@ -57,12 +57,13 @@ def embed_graph(
         Python ``list[float]``.
     """
     # 1. Collect embeddable nodes and generate their text descriptions.
-    nodes = [n for n in graph.nodes if n.label in EMBEDDABLE_LABELS]
+    nodes = [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
 
     if not nodes:
         return []
 
-    texts = [generate_text(node, graph) for node in nodes]
+    class_method_idx = build_class_method_index(graph)
+    texts = [generate_text(node, graph, class_method_idx) for node in nodes]
 
     # 2. Embed all texts in one call (fastembed handles internal batching).
     model = _MODEL_CACHE.get(model_name)

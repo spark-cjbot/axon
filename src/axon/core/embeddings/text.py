@@ -12,7 +12,25 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType
 
 
-def generate_text(node: GraphNode, graph: KnowledgeGraph) -> str:
+def build_class_method_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
+    """Pre-build a mapping from class names to their sorted method names.
+
+    Avoids O(classes × methods) scanning when generating text for each class.
+    """
+    index: dict[str, list[str]] = {}
+    for method in graph.get_nodes_by_label(NodeLabel.METHOD):
+        if method.class_name:
+            index.setdefault(method.class_name, []).append(method.name)
+    for names in index.values():
+        names.sort()
+    return index
+
+
+def generate_text(
+    node: GraphNode,
+    graph: KnowledgeGraph,
+    class_method_index: dict[str, list[str]] | None = None,
+) -> str:
     """Produce a natural-language description of *node* using graph context.
 
     The returned string is intended for use as input to an embedding model.
@@ -22,6 +40,8 @@ def generate_text(node: GraphNode, graph: KnowledgeGraph) -> str:
     Args:
         node: The graph node to describe.
         graph: The knowledge graph that *node* belongs to.
+        class_method_index: Optional pre-built class→method names index.
+            When provided, avoids O(N) scans for class text generation.
 
     Returns:
         A multi-line text description of the node.
@@ -31,7 +51,7 @@ def generate_text(node: GraphNode, graph: KnowledgeGraph) -> str:
     if label in (NodeLabel.FUNCTION, NodeLabel.METHOD):
         return _text_for_callable(node, graph)
     if label == NodeLabel.CLASS:
-        return _text_for_class(node, graph)
+        return _text_for_class(node, graph, class_method_index)
     if label == NodeLabel.FILE:
         return _text_for_file(node, graph)
     if label == NodeLabel.FOLDER:
@@ -77,12 +97,19 @@ def _text_for_callable(node: GraphNode, graph: KnowledgeGraph) -> str:
     return "\n".join(lines)
 
 
-def _text_for_class(node: GraphNode, graph: KnowledgeGraph) -> str:
+def _text_for_class(
+    node: GraphNode,
+    graph: KnowledgeGraph,
+    class_method_index: dict[str, list[str]] | None = None,
+) -> str:
     """Build text for CLASS nodes."""
     lines: list[str] = [_header(node)]
 
-    # Methods belonging to this class (nodes where class_name == this class name).
-    method_names = _class_method_names(node.name, graph)
+    # Methods belonging to this class.
+    if class_method_index is not None:
+        method_names = class_method_index.get(node.name, [])
+    else:
+        method_names = _class_method_names(node.name, graph)
     if method_names:
         lines.append(f"methods: {', '.join(method_names)}")
 

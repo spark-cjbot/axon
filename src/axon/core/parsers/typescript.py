@@ -67,6 +67,7 @@ class TypeScriptParser(LanguageParser):
             )
         self.dialect = dialect
         self._language = _DIALECT_MAP[dialect]
+        self._parser = Parser(self._language)
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,8 +75,7 @@ class TypeScriptParser(LanguageParser):
 
     def parse(self, content: str, file_path: str) -> ParseResult:
         """Parse *content* and return an intermediate :class:`ParseResult`."""
-        parser = Parser(self._language)
-        tree = parser.parse(content.encode("utf-8"))
+        tree = self._parser.parse(content.encode("utf-8"))
 
         result = ParseResult()
         self._walk(tree.root_node, content, result)

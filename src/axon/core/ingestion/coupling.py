@@ -109,6 +109,7 @@ def parse_git_log(
 def build_cochange_matrix(
     commits: list[list[str]],
     min_cochanges: int = 3,
+    max_files_per_commit: int = 50,
 ) -> dict[tuple[str, str], int]:
     """Build a co-change frequency matrix from commit data.
 
@@ -116,12 +117,17 @@ def build_cochange_matrix(
     count is incremented.  Only pairs whose count meets or exceeds
     *min_cochanges* are retained.
 
+    Commits touching more than *max_files_per_commit* files are skipped
+    (merge commits, bulk reformats) to avoid O(n^2) pair explosion and
+    coupling noise.
+
     Keys are *sorted* tuples ``(file_a, file_b)`` so that ``(A, B)`` and
     ``(B, A)`` map to the same entry.
 
     Args:
         commits: List of commits, each a list of changed file paths.
         min_cochanges: Minimum co-change count to keep a pair.
+        max_files_per_commit: Skip commits with more files than this.
 
     Returns:
         A dict mapping ``(file_a, file_b)`` sorted tuples to their count.
@@ -130,6 +136,8 @@ def build_cochange_matrix(
 
     for files in commits:
         unique_files = sorted(set(files))
+        if len(unique_files) > max_files_per_commit:
+            continue
         for a, b in combinations(unique_files, 2):
             counts[(a, b)] += 1
 

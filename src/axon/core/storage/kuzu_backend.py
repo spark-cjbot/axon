@@ -8,8 +8,10 @@ covers all source-to-target combinations.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import logging
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,7 +39,16 @@ _NODE_TABLE_NAMES: list[str] = [label.name.title().replace("_", "") for label in
 _LABEL_TO_TABLE: dict[str, str] = {
     label.value: label.name.title().replace("_", "") for label in NodeLabel
 }
-# e.g. {"file": "File", "folder": "Folder", "function": "Function", ...}
+
+# Mapping from lowercase label value to NodeLabel enum (used by _row_to_node).
+_LABEL_MAP: dict[str, NodeLabel] = {label.value: label for label in NodeLabel}
+
+# Tables worth searching via FTS/fuzzy (skip Folder, Community, Process —
+# they lack meaningful text content for search).
+_SEARCHABLE_TABLES: list[str] = [
+    t for t in _NODE_TABLE_NAMES
+    if t not in ("Folder", "Community", "Process")
+]
 
 # Common node properties shared across every table.
 _NODE_PROPERTIES = (
@@ -111,11 +122,20 @@ class KuzuBackend:
 
     # -- Lifecycle -----------------------------------------------------------
 
-    def initialize(self, path: Path) -> None:
-        """Open or create the KuzuDB database at *path* and set up the schema."""
-        self._db = kuzu.Database(str(path))
+    def initialize(self, path: Path, *, read_only: bool = False) -> None:
+        """Open or create the KuzuDB database at *path* and set up the schema.
+
+        Args:
+            path: Filesystem path to the KuzuDB database directory.
+            read_only: If ``True``, open the database in read-only mode.
+                This allows multiple concurrent readers (e.g. MCP server
+                instances) without lock conflicts.  Schema creation is
+                skipped since the database must already exist.
+        """
+        self._db = kuzu.Database(str(path), read_only=read_only)
         self._conn = kuzu.Connection(self._db)
-        self._create_schema()
+        if not read_only:
+            self._create_schema()
 
     def close(self) -> None:
         """Release the connection and database handles.
@@ -235,35 +255,13 @@ class KuzuBackend:
     def traverse(self, start_id: str, depth: int) -> list[GraphNode]:
         """BFS traversal through CALLS edges up to *depth* hops.
 
-        Uses KuzuDB's recursive relationship syntax to perform the entire
-        traversal in a single query instead of N+1 round-trips.
+        Uses manual BFS via ``get_callees`` to ensure only CALLS relationships
+        are followed (KuzuDB recursive paths cannot filter by rel_type).
         """
         assert self._conn is not None
-        table = _table_for_id(start_id)
-        if table is None:
+        if _table_for_id(start_id) is None:
             return []
 
-        # Use recursive relationship to get all reachable nodes in one query.
-        # KuzuDB syntax: -[:CodeRelation*1..{depth}]->
-        query = (
-            f"MATCH (start:{table})-[:CodeRelation*1..{depth}]->(reached) "
-            f"WHERE start.id = $sid "
-            f"RETURN DISTINCT reached.*"
-        )
-        try:
-            result_nodes = self._query_nodes(query, parameters={"sid": start_id})
-            # Filter to only CALLS relationships by post-filtering.
-            # KuzuDB recursive paths don't support property filters directly,
-            # so we still need to verify reachability via calls.
-            # For correctness, fall back to BFS if the recursive query
-            # returns too many unrelated nodes.
-            if result_nodes:
-                return result_nodes
-        except Exception:
-            logger.debug("Recursive traverse failed, falling back to BFS", exc_info=True)
-
-        # Fallback: manual BFS (still needed if recursive query isn't supported
-        # or if we need calls-only filtering).
         visited: set[str] = set()
         result_list: list[GraphNode] = []
         queue: deque[tuple[str, int]] = deque([(start_id, 0)])
@@ -298,6 +296,50 @@ class KuzuBackend:
 
     # -- Search --------------------------------------------------------------
 
+    def exact_name_search(self, name: str, limit: int = 5) -> list[SearchResult]:
+        """Search for nodes with an exact name match across all searchable tables.
+
+        Returns results sorted by label priority (functions/methods first),
+        preferring source files over test files.
+        """
+        assert self._conn is not None
+        candidates: list[SearchResult] = []
+
+        for table in _SEARCHABLE_TABLES:
+            cypher = (
+                f"MATCH (n:{table}) WHERE n.name = $name "
+                f"RETURN n.id, n.name, n.file_path, n.content, n.signature "
+                f"LIMIT {limit}"
+            )
+            try:
+                result = self._conn.execute(cypher, parameters={"name": name})
+                while result.has_next():
+                    row = result.get_next()
+                    node_id = row[0] or ""
+                    node_name = row[1] or ""
+                    file_path = row[2] or ""
+                    content = row[3] or ""
+                    signature = row[4] or ""
+                    label_prefix = node_id.split(":", 1)[0] if node_id else ""
+                    snippet = content[:200] if content else signature[:200]
+                    # Prioritize source over test files.
+                    score = 2.0 if "/tests/" not in file_path else 1.0
+                    candidates.append(
+                        SearchResult(
+                            node_id=node_id,
+                            score=score,
+                            node_name=node_name,
+                            file_path=file_path,
+                            label=label_prefix,
+                            snippet=snippet,
+                        )
+                    )
+            except Exception:
+                logger.debug("exact_name_search failed on table %s", table, exc_info=True)
+
+        candidates.sort(key=lambda r: (-r.score, r.node_id))
+        return candidates[:limit]
+
     def fts_search(self, query: str, limit: int) -> list[SearchResult]:
         """BM25 full-text search using KuzuDB's native FTS extension.
 
@@ -311,7 +353,7 @@ class KuzuBackend:
         escaped_q = _escape(query)
         candidates: list[SearchResult] = []
 
-        for table in _NODE_TABLE_NAMES:
+        for table in _SEARCHABLE_TABLES:
             idx_name = f"{table.lower()}_fts"
             cypher = (
                 f"CALL QUERY_FTS_INDEX('{table}', '{idx_name}', '{escaped_q}') "
@@ -362,7 +404,7 @@ class KuzuBackend:
         escaped_q = _escape(query.lower())
         candidates: list[SearchResult] = []
 
-        for table in _NODE_TABLE_NAMES:
+        for table in _SEARCHABLE_TABLES:
             cypher = (
                 f"MATCH (n:{table}) "
                 f"WHERE levenshtein(lower(n.name), '{escaped_q}') <= {max_distance} "
@@ -404,9 +446,16 @@ class KuzuBackend:
     def store_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
         """Persist embedding vectors into the Embedding node table.
 
-        Uses parameterised MERGE (upsert) to insert or update vectors.
+        Attempts batch CSV COPY FROM first, falls back to individual MERGE.
         """
         assert self._conn is not None
+        if not embeddings:
+            return
+
+        if self._bulk_store_embeddings_csv(embeddings):
+            return
+
+        # Fallback: individual MERGE (upsert).
         for emb in embeddings:
             try:
                 self._conn.execute(
@@ -515,8 +564,8 @@ class KuzuBackend:
     def bulk_load(self, graph: KnowledgeGraph) -> None:
         """Replace the entire store with the contents of *graph*.
 
-        Drops all existing data, then inserts every node and relationship
-        from the in-memory graph.
+        Uses CSV-based COPY FROM for bulk loading nodes and relationships,
+        falling back to individual inserts if COPY FROM fails.
         """
         assert self._conn is not None
         # Clear existing data — delete nodes (relationships cascade).
@@ -526,8 +575,14 @@ class KuzuBackend:
             except Exception:
                 pass
 
-        self.add_nodes(graph.nodes)
-        self.add_relationships(graph.relationships)
+        # Batch-load nodes via CSV COPY FROM.
+        if not self._bulk_load_nodes_csv(graph):
+            self.add_nodes(graph.nodes)
+
+        # Batch-load relationships via CSV COPY FROM.
+        if not self._bulk_load_rels_csv(graph):
+            self.add_relationships(graph.relationships)
+
         self.rebuild_fts_indexes()
 
     def rebuild_fts_indexes(self) -> None:
@@ -550,6 +605,137 @@ class KuzuBackend:
                 )
             except Exception:
                 logger.debug("FTS index rebuild failed for %s", table, exc_info=True)
+
+    # -- Batch CSV helpers ---------------------------------------------------
+
+    def _bulk_load_nodes_csv(self, graph: KnowledgeGraph) -> bool:
+        """Load all nodes via temporary CSV files + COPY FROM.
+
+        Groups nodes by table, writes one CSV per table, and uses
+        KuzuDB's COPY FROM for bulk ingestion.
+
+        Returns True on success, False if COPY FROM is not available.
+        """
+        assert self._conn is not None
+        # Group nodes by table name.
+        by_table: dict[str, list[GraphNode]] = {}
+        for node in graph.iter_nodes():
+            table = _LABEL_TO_TABLE.get(node.label.value)
+            if table:
+                by_table.setdefault(table, []).append(node)
+
+        try:
+            for table, nodes in by_table.items():
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".csv", delete=False, newline=""
+                ) as f:
+                    writer = csv.writer(f)
+                    for node in nodes:
+                        writer.writerow([
+                            node.id,
+                            node.name,
+                            node.file_path,
+                            node.start_line,
+                            node.end_line,
+                            node.content,
+                            node.signature,
+                            node.language,
+                            node.class_name,
+                            node.is_dead,
+                            node.is_entry_point,
+                            node.is_exported,
+                        ])
+                    csv_path = f.name
+
+                self._conn.execute(
+                    f'COPY {table} FROM "{csv_path}" (HEADER=false)'
+                )
+                Path(csv_path).unlink(missing_ok=True)
+            return True
+        except Exception:
+            logger.debug("CSV bulk_load_nodes failed, falling back", exc_info=True)
+            return False
+
+    def _bulk_load_rels_csv(self, graph: KnowledgeGraph) -> bool:
+        """Load all relationships via temporary CSV files + COPY FROM.
+
+        Groups relationships by (src_table, dst_table) combination and
+        writes one CSV per group.
+
+        Returns True on success, False if COPY FROM is not available.
+        """
+        assert self._conn is not None
+        # Group by (src_table, dst_table).
+        by_pair: dict[tuple[str, str], list[GraphRelationship]] = {}
+        for rel in graph.iter_relationships():
+            src_table = _table_for_id(rel.source)
+            dst_table = _table_for_id(rel.target)
+            if src_table and dst_table:
+                by_pair.setdefault((src_table, dst_table), []).append(rel)
+
+        try:
+            for (src_table, dst_table), rels in by_pair.items():
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".csv", delete=False, newline=""
+                ) as f:
+                    writer = csv.writer(f)
+                    for rel in rels:
+                        props = rel.properties or {}
+                        writer.writerow([
+                            rel.source,
+                            rel.target,
+                            rel.type.value,
+                            float(props.get("confidence", 1.0)),
+                            str(props.get("role", "")),
+                            int(props.get("step_number", 0)),
+                            float(props.get("strength", 0.0)),
+                            int(props.get("co_changes", 0)),
+                            str(props.get("symbols", "")),
+                        ])
+                    csv_path = f.name
+
+                # KuzuDB rel table names for groups: CodeRelation_{src}_{dst}
+                rel_table = f"CodeRelation_{src_table}_{dst_table}"
+                self._conn.execute(
+                    f'COPY {rel_table} FROM "{csv_path}" (HEADER=false)'
+                )
+                Path(csv_path).unlink(missing_ok=True)
+            return True
+        except Exception:
+            logger.debug("CSV bulk_load_rels failed, falling back", exc_info=True)
+            return False
+
+    def _bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
+        """Store embeddings via temporary CSV + COPY FROM.
+
+        Returns True on success, False if COPY FROM is not available.
+        """
+        assert self._conn is not None
+        try:
+            # Clear existing embeddings first.
+            try:
+                self._conn.execute("MATCH (e:Embedding) DELETE e")
+            except Exception:
+                pass
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".csv", delete=False, newline=""
+            ) as f:
+                writer = csv.writer(f)
+                for emb in embeddings:
+                    # Write vector as a bracketed list string for KuzuDB.
+                    vec_str = "[" + ",".join(str(v) for v in emb.embedding) + "]"
+                    writer.writerow([emb.node_id, vec_str])
+                csv_path = f.name
+
+            self._conn.execute(
+                f'COPY Embedding FROM "{csv_path}" (HEADER=false)'
+            )
+            Path(csv_path).unlink(missing_ok=True)
+            return True
+        except Exception:
+            logger.debug("CSV bulk_store_embeddings failed, falling back", exc_info=True)
+            return False
 
     # -- Internal helpers ----------------------------------------------------
 
@@ -720,8 +906,7 @@ class KuzuBackend:
             nid = node_id or row[0]
             # Determine the label from the ID prefix.
             prefix = nid.split(":", 1)[0]
-            label_map = {label.value: label for label in NodeLabel}
-            label = label_map.get(prefix, NodeLabel.FILE)
+            label = _LABEL_MAP.get(prefix, NodeLabel.FILE)
 
             return GraphNode(
                 id=row[0],

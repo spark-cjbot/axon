@@ -40,7 +40,7 @@ def discover_files(
     Returns
     -------
     list[Path]
-        Sorted list of absolute :class:`Path` objects for each discovered file.
+        List of absolute :class:`Path` objects for each discovered file.
     """
     repo_path = repo_path.resolve()
     discovered: list[Path] = []
@@ -59,7 +59,6 @@ def discover_files(
 
         discovered.append(file_path)
 
-    discovered.sort()
     return discovered
 
 

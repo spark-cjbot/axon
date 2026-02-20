@@ -14,43 +14,74 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel
 
 
+class FileSymbolIndex:
+    """Pre-built per-file interval index for fast containment lookups.
+
+    Stores ``(start_line, end_line, span, node_id)`` tuples sorted by
+    ``start_line`` alongside a pre-computed ``start_lines`` list for
+    O(log N) binary search without per-lookup list creation.
+    """
+
+    __slots__ = ("_entries", "_start_lines")
+
+    def __init__(
+        self,
+        entries: dict[str, list[tuple[int, int, int, str]]],
+        start_lines: dict[str, list[int]],
+    ) -> None:
+        self._entries = entries
+        self._start_lines = start_lines
+
+    def get_entries(self, file_path: str) -> list[tuple[int, int, int, str]] | None:
+        return self._entries.get(file_path)
+
+    def get_start_lines(self, file_path: str) -> list[int] | None:
+        return self._start_lines.get(file_path)
+
+
 def build_file_symbol_index(
     graph: KnowledgeGraph,
     labels: tuple[NodeLabel, ...],
-) -> dict[str, list[tuple[int, int, int, str]]]:
+) -> FileSymbolIndex:
     """Build a per-file sorted interval index for fast containment lookups.
 
     For each file, symbols are stored as ``(start_line, end_line, span, node_id)``
-    tuples sorted by ``start_line``.
+    tuples sorted by ``start_line``.  A pre-computed ``start_lines`` list per file
+    avoids redundant list creation during lookups.
 
     Args:
         graph: The knowledge graph containing parsed symbol nodes.
         labels: Which node labels to include in the index.
 
     Returns:
-        A dict mapping ``file_path`` to a sorted list of interval tuples.
+        A :class:`FileSymbolIndex` with entries and pre-computed start lines.
     """
-    index: dict[str, list[tuple[int, int, int, str]]] = defaultdict(list)
+    entries: dict[str, list[tuple[int, int, int, str]]] = defaultdict(list)
 
     for label in labels:
         for node in graph.get_nodes_by_label(label):
             if node.file_path and node.start_line > 0:
                 span = node.end_line - node.start_line
-                index[node.file_path].append(
+                entries[node.file_path].append(
                     (node.start_line, node.end_line, span, node.id)
                 )
 
     # Sort each file's symbols by start_line for binary search.
-    for entries in index.values():
-        entries.sort(key=lambda t: t[0])
+    for file_entries in entries.values():
+        file_entries.sort(key=lambda t: t[0])
 
-    return index
+    # Pre-compute start_lines lists to avoid per-lookup list creation.
+    start_lines: dict[str, list[int]] = {
+        fp: [e[0] for e in file_entries] for fp, file_entries in entries.items()
+    }
+
+    return FileSymbolIndex(entries, start_lines)
 
 
 def find_containing_symbol(
     line: int,
     file_path: str,
-    file_symbol_index: dict[str, list[tuple[int, int, int, str]]],
+    file_symbol_index: FileSymbolIndex,
 ) -> str | None:
     """Find the most specific symbol whose line range contains *line*.
 
@@ -66,13 +97,14 @@ def find_containing_symbol(
         The node ID of the most specific (smallest span) containing symbol,
         or ``None`` if no symbol contains the given line.
     """
-    entries = file_symbol_index.get(file_path)
+    entries = file_symbol_index.get_entries(file_path)
     if not entries:
         return None
 
     # Binary search: find the rightmost entry whose start_line <= line.
-    # entries are sorted by start_line.
-    start_lines = [e[0] for e in entries]
+    start_lines = file_symbol_index.get_start_lines(file_path)
+    if not start_lines:
+        return None
     idx = bisect.bisect_right(start_lines, line) - 1
 
     best_id: str | None = None

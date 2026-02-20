@@ -198,11 +198,8 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # Compute summary stats
     # ------------------------------------------------------------------
-    stats = graph.stats()
-    result.symbols = len(
-        [n for n in graph.nodes if n.label in _SYMBOL_LABELS]
-    )
-    result.relationships = stats["relationships"]
+    result.symbols = sum(1 for n in graph.iter_nodes() if n.label in _SYMBOL_LABELS)
+    result.relationships = graph.relationship_count
     result.duration_seconds = time.monotonic() - start
 
     return result

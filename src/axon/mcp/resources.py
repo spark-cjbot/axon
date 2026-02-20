@@ -31,7 +31,7 @@ def get_overview(storage: StorageBackend) -> str:
     # Count nodes by label
     try:
         rows = storage.execute_raw(
-            "MATCH (n) RETURN labels(n)[1], count(n) ORDER BY count(n) DESC"
+            "MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC"
         )
         if rows:
             lines.append("Node counts by type:")

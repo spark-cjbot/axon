@@ -9,6 +9,7 @@ to Symbol.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -127,8 +128,13 @@ def parse_file(file_path: str, content: str, language: str) -> FileParseData:
 def process_parsing(
     files: list[FileEntry],
     graph: KnowledgeGraph,
+    max_workers: int = 8,
 ) -> list[FileParseData]:
     """Parse every file and populate the knowledge graph with symbol nodes.
+
+    Parsing is done in parallel using a thread pool (tree-sitter releases
+    the GIL during C parsing).  Graph mutation remains sequential since
+    :class:`KnowledgeGraph` is not thread-safe.
 
     For each symbol discovered during parsing a graph node is created with
     the appropriate label (Function, Class, Method, etc.) and a DEFINES
@@ -138,21 +144,23 @@ def process_parsing(
         files: File entries produced by the walker phase.
         graph: The knowledge graph to populate.  File nodes are expected to
             already exist (created by the structure phase).
+        max_workers: Maximum number of threads for parallel parsing.
 
     Returns:
         A list of :class:`FileParseData` objects that carry the full parse
         results (imports, calls, heritage, type_refs) for use by later phases.
     """
-    all_parse_data: list[FileParseData] = []
-
-    for file_entry in files:
-        parse_data = parse_file(
-            file_path=file_entry.path,
-            content=file_entry.content,
-            language=file_entry.language,
+    # Phase 1: Parse all files in parallel.
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        all_parse_data = list(
+            executor.map(
+                lambda f: parse_file(f.path, f.content, f.language),
+                files,
+            )
         )
-        all_parse_data.append(parse_data)
 
+    # Phase 2: Graph mutation (sequential — not thread-safe).
+    for file_entry, parse_data in zip(files, all_parse_data):
         file_id = generate_id(NodeLabel.FILE, file_entry.path)
 
         for symbol in parse_data.parse_result.symbols:

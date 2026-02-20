@@ -63,8 +63,8 @@ class _StorageHolder:
             self._storage = KuzuBackend()
             db_path = Path.cwd() / ".axon" / "kuzu"
             if db_path.exists():
-                self._storage.initialize(db_path)
-                logger.info("Initialised storage from %s", db_path)
+                self._storage.initialize(db_path, read_only=True)
+                logger.info("Initialised storage (read-only) from %s", db_path)
             else:
                 logger.warning("No .axon/kuzu directory found in %s", Path.cwd())
         return self._storage

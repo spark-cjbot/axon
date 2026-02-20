@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -152,20 +153,22 @@ def diff_branches(
     if not base_ref:
         raise ValueError(f"Invalid branch range: {branch_range!r}")
 
-    # Build current branch graph (from working tree or specified ref).
+    # Build both graphs (in parallel when both need worktrees).
     if current_ref:
-        current_graph = _build_graph_for_ref(repo_path, current_ref)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            base_future = executor.submit(_build_graph_for_ref, repo_path, base_ref)
+            current_future = executor.submit(_build_graph_for_ref, repo_path, current_ref)
+            base_graph = base_future.result()
+            current_graph = current_future.result()
     else:
         current_graph = build_graph(repo_path)
+        base_graph = _build_graph_for_ref(repo_path, base_ref)
 
-    # Build base branch graph using a temporary worktree.
-    base_graph = _build_graph_for_ref(repo_path, base_ref)
-
-    # Convert to dicts for diffing.
-    base_nodes = {n.id: n for n in base_graph.nodes}
-    current_nodes = {n.id: n for n in current_graph.nodes}
-    base_rels = {r.id: r for r in base_graph.relationships}
-    current_rels = {r.id: r for r in current_graph.relationships}
+    # Convert to dicts for diffing (use iterators to avoid list copies).
+    base_nodes = {n.id: n for n in base_graph.iter_nodes()}
+    current_nodes = {n.id: n for n in current_graph.iter_nodes()}
+    base_rels = {r.id: r for r in base_graph.iter_relationships()}
+    current_rels = {r.id: r for r in current_graph.iter_relationships()}
 
     return diff_graphs(base_nodes, current_nodes, base_rels, current_rels)
 

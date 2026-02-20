@@ -9,6 +9,7 @@ scale linearly with the *result* set rather than the total graph size.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
 
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
 
@@ -47,6 +48,36 @@ class KnowledgeGraph:
     def relationships(self) -> list[GraphRelationship]:
         """Return all relationships as a list."""
         return list(self._relationships.values())
+
+    def iter_nodes(self) -> Iterator[GraphNode]:
+        """Yield all nodes without creating an intermediate list."""
+        return iter(self._nodes.values())
+
+    def iter_relationships(self) -> Iterator[GraphRelationship]:
+        """Yield all relationships without creating an intermediate list."""
+        return iter(self._relationships.values())
+
+    @property
+    def node_count(self) -> int:
+        """Return the number of nodes without list materialization."""
+        return len(self._nodes)
+
+    @property
+    def relationship_count(self) -> int:
+        """Return the number of relationships without list materialization."""
+        return len(self._relationships)
+
+    def count_nodes_by_label(self, label: NodeLabel) -> int:
+        """Return the count of nodes with *label* without list materialization."""
+        return len(self._by_label.get(label, {}))
+
+    def has_incoming(self, node_id: str, rel_type: RelType) -> bool:
+        """Return ``True`` if *node_id* has any incoming edge of *rel_type*.
+
+        Checks the index without materializing a list of relationships.
+        """
+        rels = self._incoming.get(node_id, {})
+        return any(r.type == rel_type for r in rels.values())
 
     # ------------------------------------------------------------------
     # CRUD — Nodes

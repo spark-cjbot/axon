@@ -16,6 +16,15 @@ if TYPE_CHECKING:
     from axon.core.storage.base import StorageBackend
 
 
+def _resolve_symbol(storage: StorageBackend, symbol: str) -> list:
+    """Resolve a symbol name to search results, preferring exact name matches."""
+    if hasattr(storage, "exact_name_search"):
+        results = storage.exact_name_search(symbol, limit=1)
+        if results:
+            return results
+    return storage.fts_search(symbol, limit=1)
+
+
 # ---------------------------------------------------------------------------
 # 1. axon_list_repos
 # ---------------------------------------------------------------------------
@@ -67,12 +76,13 @@ def handle_list_repos(registry_dir: Path | None = None) -> str:
     for i, repo in enumerate(repos, 1):
         name = repo.get("name", "unknown")
         path = repo.get("path", "")
-        nodes = repo.get("node_count", "?")
-        edges = repo.get("edge_count", "?")
-        files = repo.get("file_count", "?")
+        stats = repo.get("stats", {})
+        files = stats.get("files", "?")
+        symbols = stats.get("symbols", "?")
+        relationships = stats.get("relationships", "?")
         lines.append(f"  {i}. {name}")
         lines.append(f"     Path: {path}")
-        lines.append(f"     Nodes: {nodes}  Edges: {edges}  Files: {files}")
+        lines.append(f"     Files: {files}  Symbols: {symbols}  Relationships: {relationships}")
         lines.append("")
 
     return "\n".join(lines)
@@ -130,7 +140,7 @@ def handle_context(storage: StorageBackend, symbol: str) -> str:
     Returns:
         Formatted view including callers, callees, type refs, and guidance.
     """
-    results = storage.fts_search(symbol, limit=1)
+    results = _resolve_symbol(storage, symbol)
     if not results:
         return f"Symbol '{symbol}' not found."
 
@@ -193,7 +203,7 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
     Returns:
         Formatted impact analysis showing affected symbols at each depth level.
     """
-    results = storage.fts_search(symbol, limit=1)
+    results = _resolve_symbol(storage, symbol)
     if not results:
         return f"Symbol '{symbol}' not found."
 
