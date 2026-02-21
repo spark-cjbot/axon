@@ -32,6 +32,12 @@ _CALLABLE_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.CLASS,
 )
 
+_KIND_TO_LABEL: dict[str, NodeLabel] = {
+    "function": NodeLabel.FUNCTION,
+    "method": NodeLabel.METHOD,
+    "class": NodeLabel.CLASS,
+}
+
 def resolve_call(
     call: CallInfo,
     file_path: str,
@@ -231,3 +237,52 @@ def process_calls(
                     properties={"confidence": confidence},
                 )
             )
+
+        # Decorators are implicit calls — @cost_decorator on a function is
+        # equivalent to calling cost_decorator(func).  Create CALLS edges
+        # from the decorated symbol to the decorator definition.
+        for symbol in fpd.parse_result.symbols:
+            if not symbol.decorators:
+                continue
+
+            symbol_name = (
+                f"{symbol.class_name}.{symbol.name}"
+                if symbol.kind == "method" and symbol.class_name
+                else symbol.name
+            )
+            label = _KIND_TO_LABEL.get(symbol.kind)
+            if label is None:
+                continue
+            source_id = generate_id(label, fpd.file_path, symbol_name)
+
+            for dec_name in symbol.decorators:
+                # Strip the base name for dotted decorators (e.g. "app.route" → "route")
+                # but also try the full dotted name.
+                base_name = dec_name.rsplit(".", 1)[-1] if "." in dec_name else dec_name
+                call_obj = CallInfo(name=base_name, line=symbol.start_line)
+                target_id, confidence = resolve_call(
+                    call_obj, fpd.file_path, call_index, graph
+                )
+                if target_id is None and "." in dec_name:
+                    # Try full dotted name as well.
+                    call_obj = CallInfo(name=dec_name, line=symbol.start_line)
+                    target_id, confidence = resolve_call(
+                        call_obj, fpd.file_path, call_index, graph
+                    )
+                if target_id is None:
+                    continue
+
+                rel_id = f"calls:{source_id}->{target_id}"
+                if rel_id in seen:
+                    continue
+                seen.add(rel_id)
+
+                graph.add_relationship(
+                    GraphRelationship(
+                        id=rel_id,
+                        type=RelType.CALLS,
+                        source=source_id,
+                        target=target_id,
+                        properties={"confidence": confidence},
+                    )
+                )
