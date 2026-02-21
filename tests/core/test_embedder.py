@@ -155,7 +155,7 @@ class TestEmbeddableLabels:
 class TestEmbedGraphBasic:
     """Core functionality of embed_graph."""
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_returns_node_embeddings(self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph) -> None:
         """embed_graph returns a list of NodeEmbedding objects for embeddable nodes."""
         mock_model = MagicMock()
@@ -169,7 +169,7 @@ class TestEmbedGraphBasic:
         assert len(results) == 2  # function + class; folder is skipped
         assert all(isinstance(r, NodeEmbedding) for r in results)
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_embedding_vectors_are_lists_of_float(
         self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
     ) -> None:
@@ -186,7 +186,7 @@ class TestEmbedGraphBasic:
             assert isinstance(r.embedding, list)
             assert all(isinstance(v, float) for v in r.embedding)
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_embedding_values_match(
         self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
     ) -> None:
@@ -204,7 +204,7 @@ class TestEmbedGraphBasic:
         assert [0.1, 0.2, 0.3] in embeddings or pytest.approx([0.1, 0.2, 0.3]) in embeddings
         assert [0.4, 0.5, 0.6] in embeddings or pytest.approx([0.4, 0.5, 0.6]) in embeddings
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_node_ids_are_correct(
         self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
     ) -> None:
@@ -230,7 +230,7 @@ class TestEmbedGraphBasic:
 class TestEmbedGraphFiltering:
     """Filtering of non-embeddable nodes."""
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_skips_folder_nodes(
         self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
     ) -> None:
@@ -246,7 +246,7 @@ class TestEmbedGraphFiltering:
         node_ids = {r.node_id for r in results}
         assert "folder::src" not in node_ids
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_skips_community_and_process(
         self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph
     ) -> None:
@@ -266,7 +266,7 @@ class TestEmbedGraphFiltering:
         assert "community::auth" not in node_ids
         assert "process::login" not in node_ids
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_all_embeddable_labels_included(
         self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph
     ) -> None:
@@ -298,7 +298,7 @@ class TestEmbedGraphFiltering:
 class TestEmbedGraphEmpty:
     """Edge case: empty graph."""
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_empty_graph_returns_empty_list(self, mock_te_cls: MagicMock) -> None:
         """An empty graph produces no embeddings."""
         mock_model = MagicMock()
@@ -310,7 +310,7 @@ class TestEmbedGraphEmpty:
 
         assert results == []
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_graph_with_only_non_embeddable_returns_empty(self, mock_te_cls: MagicMock) -> None:
         """A graph containing only non-embeddable nodes returns an empty list."""
         mock_model = MagicMock()
@@ -338,7 +338,7 @@ class TestEmbedGraphEmpty:
 class TestEmbedGraphModelConfig:
     """Model name and batch size configuration."""
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_default_model_name(self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph) -> None:
         """Default model is BAAI/bge-small-en-v1.5."""
         mock_model = MagicMock()
@@ -351,7 +351,7 @@ class TestEmbedGraphModelConfig:
 
         mock_te_cls.assert_called_once_with(model_name="BAAI/bge-small-en-v1.5")
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_custom_model_name(self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph) -> None:
         """A custom model name is forwarded to TextEmbedding."""
         mock_model = MagicMock()
@@ -364,7 +364,7 @@ class TestEmbedGraphModelConfig:
 
         mock_te_cls.assert_called_once_with(model_name="BAAI/bge-base-en-v1.5")
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_custom_batch_size_passed_to_embed(
         self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
     ) -> None:
@@ -393,7 +393,7 @@ class TestEmbedGraphTextGeneration:
     """Verifies generate_text is called for each embeddable node."""
 
     @patch("axon.core.embeddings.embedder.generate_text")
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_generate_text_called_for_each_node(
         self,
         mock_te_cls: MagicMock,
@@ -414,7 +414,7 @@ class TestEmbedGraphTextGeneration:
         assert mock_gen_text.call_count == 2
 
     @patch("axon.core.embeddings.embedder.generate_text")
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_generated_texts_passed_to_model(
         self,
         mock_te_cls: MagicMock,
@@ -446,7 +446,7 @@ class TestEmbedGraphTextGeneration:
 class TestEmbedGraphBatchProcessing:
     """Verifies batch processing behaviour with larger graphs."""
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_many_nodes_all_embedded(self, mock_te_cls: MagicMock) -> None:
         """A graph with many embeddable nodes produces one embedding per node."""
         graph = KnowledgeGraph()
@@ -473,7 +473,7 @@ class TestEmbedGraphBatchProcessing:
         # Each embedding should have 3 dimensions
         assert all(len(r.embedding) == 3 for r in results)
 
-    @patch("axon.core.embeddings.embedder.TextEmbedding")
+    @patch("fastembed.TextEmbedding")
     def test_default_batch_size_is_64(self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph) -> None:
         """When batch_size is not specified, 64 is used by default."""
         mock_model = MagicMock()
