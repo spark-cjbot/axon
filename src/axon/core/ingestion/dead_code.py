@@ -36,7 +36,7 @@ def _is_test_file(file_path: str) -> bool:
 
     Matches paths containing ``/tests/`` or files named ``test_*.py``.
     """
-    return "/tests/" in file_path or "/test_" in file_path
+    return "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py")
 
 def _is_dunder(name: str) -> bool:
     """Return ``True`` if *name* is a dunder (double-underscore) method.
@@ -59,23 +59,63 @@ def _is_type_referenced(graph: KnowledgeGraph, node_id: str, label: NodeLabel) -
     return graph.has_incoming(node_id, RelType.USES_TYPE)
 
 _NON_FRAMEWORK_DECORATORS: frozenset[str] = frozenset({
-    "typing.overload",
     "functools.wraps",
     "functools.lru_cache",
     "functools.cached_property",
     "functools.cache",
-    "abc.abstractmethod",
+})
+
+_FRAMEWORK_DECORATOR_NAMES: frozenset[str] = frozenset({
+    "task", "shared_task", "periodic_task", "job",
+    "receiver", "on_event", "handler",
+    "validator", "field_validator", "root_validator", "model_validator",
+    "contextmanager", "asynccontextmanager",
+    "fixture",
+    "route", "endpoint", "command",
+    "hybrid_property",
 })
 
 def _has_framework_decorator(node: GraphNode) -> bool:
-    """Return ``True`` if *node* has a dotted decorator not in the known non-framework set."""
+    """Return ``True`` if *node* has a framework decorator (dotted or undotted)."""
     decorators: list[str] = node.properties.get("decorators", [])
-    return any("." in dec and dec not in _NON_FRAMEWORK_DECORATORS for dec in decorators)
+    for dec in decorators:
+        # Known undotted framework decorator names.
+        if dec in _FRAMEWORK_DECORATOR_NAMES:
+            return True
+        # Dotted decorators (e.g. app.route) that aren't known non-framework.
+        if "." in dec and dec not in _NON_FRAMEWORK_DECORATORS:
+            return True
+    return False
 
 def _has_property_decorator(node: GraphNode) -> bool:
     """Return ``True`` if *node* is a ``@property`` (accessed as attribute, not called)."""
     decorators: list[str] = node.properties.get("decorators", [])
     return "property" in decorators
+
+_TYPING_STUB_DECORATORS: frozenset[str] = frozenset({
+    "overload", "typing.overload",
+    "abstractmethod", "abc.abstractmethod",
+})
+
+def _has_typing_stub_decorator(node: GraphNode) -> bool:
+    """Return ``True`` if *node* is an ``@overload`` or ``@abstractmethod`` stub."""
+    decorators: list[str] = node.properties.get("decorators", [])
+    return any(d in _TYPING_STUB_DECORATORS for d in decorators)
+
+_ENUM_BASES: frozenset[str] = frozenset({
+    "Enum", "IntEnum", "StrEnum", "Flag", "IntFlag",
+})
+
+def _is_enum_class(node: GraphNode, label: NodeLabel) -> bool:
+    """Return ``True`` if *node* is an enum class (members accessed via dot, not called)."""
+    if label != NodeLabel.CLASS:
+        return False
+    content = node.content or ""
+    # Check for common enum base classes in the class signature.
+    for base in _ENUM_BASES:
+        if f"({base})" in content or f"({base}," in content or f", {base})" in content:
+            return True
+    return False
 
 def _is_python_public_api(name: str, file_path: str) -> bool:
     """Return ``True`` if *name* is a public symbol in an ``__init__.py`` file."""
@@ -277,6 +317,10 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
             if _has_framework_decorator(node):
                 continue
             if _has_property_decorator(node):
+                continue
+            if _has_typing_stub_decorator(node):
+                continue
+            if _is_enum_class(node, label):
                 continue
 
             node.is_dead = True

@@ -176,6 +176,43 @@ def _pick_closest(candidate_ids: list[str], graph: KnowledgeGraph) -> str | None
 
     return best_id
 
+def _resolve_receiver_method(
+    receiver: str,
+    method_name: str,
+    source_id: str,
+    file_path: str,
+    call_index: dict[str, list[str]],
+    graph: KnowledgeGraph,
+    seen: set[str],
+) -> None:
+    """Resolve ``Receiver.method()`` to the METHOD node and create a CALLS edge.
+
+    Looks for a METHOD node whose ``name`` matches *method_name* and whose
+    ``class_name`` matches *receiver*.  Searches same-file first, then
+    globally.
+    """
+    for nid in call_index.get(method_name, []):
+        node = graph.get_node(nid)
+        if (
+            node is not None
+            and node.label == NodeLabel.METHOD
+            and node.class_name == receiver
+        ):
+            rel_id = f"calls:{source_id}->{nid}"
+            if rel_id not in seen:
+                seen.add(rel_id)
+                graph.add_relationship(
+                    GraphRelationship(
+                        id=rel_id,
+                        type=RelType.CALLS,
+                        source=source_id,
+                        target=nid,
+                        properties={"confidence": 0.8},
+                    )
+                )
+            return
+
+
 def process_calls(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
@@ -221,22 +258,77 @@ def process_calls(
                 call, fpd.file_path, call_index, graph
             )
             if target_id is None:
-                continue
+                # Even if the call target can't be resolved, still process
+                # identifier arguments (callbacks) below.
+                pass
+            else:
+                rel_id = f"calls:{source_id}->{target_id}"
+                if rel_id not in seen:
+                    seen.add(rel_id)
+                    graph.add_relationship(
+                        GraphRelationship(
+                            id=rel_id,
+                            type=RelType.CALLS,
+                            source=source_id,
+                            target=target_id,
+                            properties={"confidence": confidence},
+                        )
+                    )
 
-            rel_id = f"calls:{source_id}->{target_id}"
-            if rel_id in seen:
-                continue
-            seen.add(rel_id)
-
-            graph.add_relationship(
-                GraphRelationship(
-                    id=rel_id,
-                    type=RelType.CALLS,
-                    source=source_id,
-                    target=target_id,
-                    properties={"confidence": confidence},
+            # Callback arguments: bare identifiers passed as arguments
+            # (e.g. map(transform, items), Depends(get_db)).
+            for arg_name in call.arguments:
+                arg_call = CallInfo(name=arg_name, line=call.line)
+                arg_id, arg_conf = resolve_call(
+                    arg_call, fpd.file_path, call_index, graph
                 )
-            )
+                if arg_id is not None:
+                    arg_rel_id = f"calls:{source_id}->{arg_id}"
+                    if arg_rel_id not in seen:
+                        seen.add(arg_rel_id)
+                        graph.add_relationship(
+                            GraphRelationship(
+                                id=arg_rel_id,
+                                type=RelType.CALLS,
+                                source=source_id,
+                                target=arg_id,
+                                properties={"confidence": arg_conf * 0.8},
+                            )
+                        )
+
+            if target_id is None:
+                continue
+
+            # When the call has a receiver (e.g. ClassName.method()), also
+            # create a CALLS edge to the receiver class so it isn't flagged
+            # as dead code.
+            receiver = call.receiver
+            if receiver and receiver not in ("self", "this"):
+                receiver_call = CallInfo(name=receiver, line=call.line)
+                recv_id, recv_conf = resolve_call(
+                    receiver_call, fpd.file_path, call_index, graph
+                )
+                if recv_id is not None:
+                    recv_rel_id = f"calls:{source_id}->{recv_id}"
+                    if recv_rel_id not in seen:
+                        seen.add(recv_rel_id)
+                        graph.add_relationship(
+                            GraphRelationship(
+                                id=recv_rel_id,
+                                type=RelType.CALLS,
+                                source=source_id,
+                                target=recv_id,
+                                properties={"confidence": recv_conf},
+                            )
+                        )
+
+                    # Also resolve the method on the receiver class.
+                    # e.g. MathUtils.compute() → find METHOD node with
+                    # name="compute" and class_name="MathUtils".
+                    _resolve_receiver_method(
+                        receiver, call.name, source_id, fpd.file_path,
+                        call_index, graph, seen,
+                    )
 
         # Decorators are implicit calls — @cost_decorator on a function is
         # equivalent to calling cost_decorator(func).  Create CALLS edges
