@@ -26,6 +26,8 @@ _CALLABLE_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.METHOD,
 )
 
+_MAX_FLOW_SIZE = 25
+
 _PYTHON_DECORATOR_PATTERNS: tuple[str, ...] = (
     "@app.route",
     "@router",
@@ -118,14 +120,15 @@ def _matches_framework_pattern(node: GraphNode) -> bool:
 def trace_flow(
     entry_point: GraphNode,
     graph: KnowledgeGraph,
-    max_depth: int = 10,
-    max_branching: int = 4,
+    max_depth: int = 6,
+    max_branching: int = 3,
 ) -> list[GraphNode]:
     """BFS from *entry_point* through CALLS edges.
 
     At each level, at most *max_branching* callees are followed (those
     with higher confidence on the CALLS edge are preferred).  Traversal
-    stops after *max_depth* levels or when no unvisited callees remain.
+    stops after *max_depth* levels, when the flow reaches
+    :data:`_MAX_FLOW_SIZE` nodes, or when no unvisited callees remain.
 
     Args:
         entry_point: The starting node for the flow.
@@ -142,6 +145,9 @@ def trace_flow(
     queue: deque[tuple[str, int]] = deque([(entry_point.id, 0)])
 
     while queue:
+        if len(result) >= _MAX_FLOW_SIZE:
+            break
+
         current_id, depth = queue.popleft()
 
         if depth >= max_depth:
@@ -154,7 +160,7 @@ def trace_flow(
 
         count = 0
         for rel in outgoing:
-            if count >= max_branching:
+            if count >= max_branching or len(result) >= _MAX_FLOW_SIZE:
                 break
             target_id = rel.target
             if target_id in visited:
@@ -203,13 +209,12 @@ def deduplicate_flows(flows: list[list[GraphNode]]) -> list[list[GraphNode]]:
     Returns:
         Deduplicated list of flows.
     """
-    indexed: list[tuple[int, list[GraphNode]]] = list(enumerate(flows))
-    indexed.sort(key=lambda x: len(x[1]), reverse=True)
+    flows_sorted = sorted(flows, key=len, reverse=True)
 
     kept: list[list[GraphNode]] = []
     kept_sets: list[set[str]] = []
 
-    for _orig_idx, flow in indexed:
+    for flow in flows_sorted:
         flow_ids = {n.id for n in flow}
         is_duplicate = False
 
@@ -219,7 +224,7 @@ def deduplicate_flows(flows: list[list[GraphNode]]) -> list[list[GraphNode]]:
             intersection = flow_ids & kept_set
             smaller_size = min(len(flow_ids), len(kept_set))
             overlap = len(intersection) / smaller_size
-            if overlap > 0.7:
+            if overlap > 0.5:
                 is_duplicate = True
                 break
 

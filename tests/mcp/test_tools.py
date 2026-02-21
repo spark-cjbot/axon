@@ -281,22 +281,21 @@ class TestHandleDeadCode:
         assert "No dead code detected" in result
 
     def test_with_dead_code(self, mock_storage):
-        """Returns formatted dead code list."""
+        """Returns formatted dead code list (delegates to get_dead_code_list)."""
         mock_storage.execute_raw.return_value = [
-            ["function:src/old.py:unused_func", "unused_func", "src/old.py"],
-            ["class:src/models.py:DeprecatedModel", "DeprecatedModel", "src/models.py"],
+            ["unused_func", "src/old.py", 10],
+            ["DeprecatedModel", "src/models.py", 5],
         ]
         result = handle_dead_code(mock_storage)
-        assert "Dead code (2 symbols)" in result
+        assert "Dead Code Report (2 symbols)" in result
         assert "unused_func" in result
         assert "DeprecatedModel" in result
-        assert "Tip:" in result
 
     def test_execute_raw_exception(self, mock_storage):
         """Gracefully handles storage errors."""
         mock_storage.execute_raw.side_effect = RuntimeError("DB error")
         result = handle_dead_code(mock_storage)
-        assert "No dead code detected" in result
+        assert "Could not retrieve dead code list" in result
 
 
 # ---------------------------------------------------------------------------

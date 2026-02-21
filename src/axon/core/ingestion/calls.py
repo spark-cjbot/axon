@@ -21,7 +21,7 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.ingestion.parser_phase import FileParseData
-from axon.core.ingestion.symbol_lookup import build_file_symbol_index, find_containing_symbol
+from axon.core.ingestion.symbol_lookup import build_file_symbol_index, build_name_index, find_containing_symbol
 from axon.core.parsers.base import CallInfo
 
 logger = logging.getLogger(__name__)
@@ -31,25 +31,6 @@ _CALLABLE_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.METHOD,
     NodeLabel.CLASS,
 )
-
-def build_call_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
-    """Build a mapping from symbol names to their node IDs.
-
-    Includes Function, Method, and Class nodes.  Classes are included
-    because constructor calls (e.g. ``User()``) target the class node.
-
-    Args:
-        graph: The knowledge graph containing parsed symbol nodes.
-
-    Returns:
-        A dict mapping symbol name to a list of node IDs.  Multiple
-        symbols can share the same name across different files.
-    """
-    index: dict[str, list[str]] = {}
-    for label in _CALLABLE_LABELS:
-        for node in graph.get_nodes_by_label(label):
-            index.setdefault(node.name, []).append(node.id)
-    return index
 
 def resolve_call(
     call: CallInfo,
@@ -212,7 +193,7 @@ def process_calls(
         parse_data: File parse results from the parser phase.
         graph: The knowledge graph to populate with CALLS relationships.
     """
-    call_index = build_call_index(graph)
+    call_index = build_name_index(graph, _CALLABLE_LABELS)
     file_sym_index = build_file_symbol_index(graph, _CALLABLE_LABELS)
     seen: set[str] = set()
 

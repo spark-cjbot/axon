@@ -123,7 +123,8 @@ def pipeline_result(
     sample_repo: Path, storage: KuzuBackend
 ) -> PipelineResult:
     """Run the full pipeline once and return the result."""
-    return run_pipeline(sample_repo, storage)
+    _, result = run_pipeline(sample_repo, storage)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -335,8 +336,8 @@ class TestIdempotency:
     def test_idempotent(
         self, sample_repo: Path, storage: KuzuBackend
     ) -> None:
-        result1 = run_pipeline(sample_repo, storage)
-        result2 = run_pipeline(sample_repo, storage)
+        _, result1 = run_pipeline(sample_repo, storage)
+        _, result2 = run_pipeline(sample_repo, storage)
 
         assert result1.files == result2.files
         assert result1.symbols == result2.symbols

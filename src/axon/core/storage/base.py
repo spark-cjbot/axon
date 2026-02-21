@@ -9,12 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
+from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship
-
-if TYPE_CHECKING:
-    from axon.core.graph.graph import KnowledgeGraph
 
 @dataclass
 class SearchResult:
@@ -83,8 +81,13 @@ class StorageBackend(Protocol):
         """Return nodes that reference the type identified by *node_id*."""
         ...
 
-    def traverse(self, start_id: str, depth: int) -> list[GraphNode]:
-        """Breadth-first traversal up to *depth* hops from *start_id*."""
+    def traverse(self, start_id: str, depth: int, direction: str = "callers") -> list[GraphNode]:
+        """Breadth-first traversal up to *depth* hops from *start_id*.
+
+        Args:
+            direction: ``"callers"`` follows incoming CALLS (blast radius),
+                       ``"callees"`` follows outgoing CALLS (dependencies).
+        """
         ...
 
     def execute_raw(self, query: str) -> Any:

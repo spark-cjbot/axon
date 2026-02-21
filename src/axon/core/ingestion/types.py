@@ -17,7 +17,7 @@ from axon.core.graph.model import (
     RelType,
 )
 from axon.core.ingestion.parser_phase import FileParseData
-from axon.core.ingestion.symbol_lookup import build_file_symbol_index, find_containing_symbol
+from axon.core.ingestion.symbol_lookup import build_file_symbol_index, build_name_index, find_containing_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -31,25 +31,6 @@ _CONTAINER_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.FUNCTION,
     NodeLabel.METHOD,
 )
-
-def build_type_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
-    """Build a mapping from type names to their node IDs.
-
-    Includes Class, Interface, and TypeAlias nodes so that type annotation
-    references can be resolved to the defining symbol.
-
-    Args:
-        graph: The knowledge graph containing parsed symbol nodes.
-
-    Returns:
-        A dict mapping type name to a list of node IDs.  Multiple
-        symbols can share the same name across different files.
-    """
-    index: dict[str, list[str]] = {}
-    for label in _TYPE_LABELS:
-        for node in graph.get_nodes_by_label(label):
-            index.setdefault(node.name, []).append(node.id)
-    return index
 
 def _resolve_type(
     type_name: str,
@@ -113,7 +94,7 @@ def process_types(
         parse_data: File parse results from the parser phase.
         graph: The knowledge graph to populate with USES_TYPE relationships.
     """
-    type_index = build_type_index(graph)
+    type_index = build_name_index(graph, _TYPE_LABELS)
     file_sym_index = build_file_symbol_index(graph, _CONTAINER_LABELS)
     seen: set[str] = set()
 

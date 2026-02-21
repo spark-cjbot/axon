@@ -13,12 +13,9 @@ from dominating, *rank_r(d)* is the 1-based position of document *d* in ranker
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
-from axon.core.storage.base import SearchResult
+from axon.core.storage.base import SearchResult, StorageBackend
 
-if TYPE_CHECKING:
-    from axon.core.storage.base import StorageBackend
 
 def hybrid_search(
     query: str,

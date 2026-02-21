@@ -6,9 +6,12 @@ import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType, generate_id
-from axon.core.ingestion.heritage import build_symbol_index, process_heritage
+from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import ParseResult
+
+_HERITAGE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE)
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +85,15 @@ def _make_parse_data(
 
 
 # ---------------------------------------------------------------------------
-# build_symbol_index tests
+# build_name_index tests (heritage labels)
 # ---------------------------------------------------------------------------
 
 
 class TestBuildSymbolIndex:
-    """build_symbol_index produces a correct mapping from name to node ID."""
+    """build_name_index produces a correct mapping from name to node ID."""
 
     def test_build_symbol_index(self, graph: KnowledgeGraph) -> None:
-        index = build_symbol_index(graph)
+        index = build_name_index(graph, _HERITAGE_LABELS)
 
         assert "Animal" in index
         assert "Dog" in index
@@ -98,7 +101,7 @@ class TestBuildSymbolIndex:
         assert "User" in index
 
     def test_index_values_are_node_ids(self, graph: KnowledgeGraph) -> None:
-        index = build_symbol_index(graph)
+        index = build_name_index(graph, _HERITAGE_LABELS)
 
         for name, node_ids in index.items():
             assert isinstance(node_ids, list)
@@ -119,7 +122,7 @@ class TestBuildSymbolIndex:
                 file_path="src/models.py",
             )
         )
-        index = build_symbol_index(graph)
+        index = build_name_index(graph, _HERITAGE_LABELS)
         assert "helper" not in index
 
 

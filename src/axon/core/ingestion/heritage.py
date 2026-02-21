@@ -18,6 +18,7 @@ from axon.core.graph.model import (
     RelType,
 )
 from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.symbol_lookup import build_name_index
 
 logger = logging.getLogger(__name__)
 
@@ -29,24 +30,6 @@ _KIND_TO_REL: dict[str, RelType] = {
 }
 
 _PROTOCOL_MARKERS: frozenset[str] = frozenset({"Protocol", "ABC", "ABCMeta"})
-
-def build_symbol_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
-    """Build a mapping from symbol names to their node IDs.
-
-    Only Class and Interface nodes are included.  Multiple symbols can
-    share the same name across different files, so the value is a list.
-
-    Args:
-        graph: The knowledge graph containing parsed symbol nodes.
-
-    Returns:
-        A dict mapping symbol name to a list of node IDs.
-    """
-    index: dict[str, list[str]] = {}
-    for label in _HERITAGE_LABELS:
-        for node in graph.get_nodes_by_label(label):
-            index.setdefault(node.name, []).append(node.id)
-    return index
 
 def _resolve_node(
     name: str,
@@ -92,7 +75,7 @@ def process_heritage(
         parse_data: File parse results produced by the parser phase.
         graph: The knowledge graph to populate with heritage relationships.
     """
-    symbol_index = build_symbol_index(graph)
+    symbol_index = build_name_index(graph, _HERITAGE_LABELS)
 
     for fpd in parse_data:
         for class_name, kind, parent_name in fpd.parse_result.heritage:

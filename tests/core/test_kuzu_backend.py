@@ -276,16 +276,15 @@ class TestRemoveNodesByFile:
         n3 = _make_node(name="f3", file_path="src/b.py")
         backend.add_nodes([n1, n2, n3])
 
-        removed = backend.remove_nodes_by_file("src/a.py")
-        assert removed == 2
+        backend.remove_nodes_by_file("src/a.py")
 
         assert backend.get_node(n1.id) is None
         assert backend.get_node(n2.id) is None
         assert backend.get_node(n3.id) is not None
 
     def test_returns_zero_for_no_match(self, backend: KuzuBackend) -> None:
-        removed = backend.remove_nodes_by_file("nonexistent.py")
-        assert removed == 0
+        result = backend.remove_nodes_by_file("nonexistent.py")
+        assert result == 0
 
 
 # ---------------------------------------------------------------------------

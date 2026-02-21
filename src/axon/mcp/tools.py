@@ -10,13 +10,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from axon.core.search.hybrid import hybrid_search
+from axon.core.storage.base import StorageBackend
 
-if TYPE_CHECKING:
-    from axon.core.storage.base import StorageBackend
 
 def _resolve_symbol(storage: StorageBackend, symbol: str) -> list:
     """Resolve a symbol name to search results, preferring exact name matches."""
@@ -184,9 +182,9 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
     if not start_node:
         return f"Symbol '{symbol}' not found."
 
-    affected = storage.traverse(start_node.id, depth)
+    affected = storage.traverse(start_node.id, depth, direction="callers")
     if not affected:
-        return f"No downstream dependencies found for '{symbol}'."
+        return f"No upstream callers found for '{symbol}'."
 
     lines = [f"Impact analysis for: {start_node.name} ({start_node.label.value.title()})"]
     lines.append(f"Depth: {depth}")
@@ -204,36 +202,18 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
 def handle_dead_code(storage: StorageBackend) -> str:
     """List all symbols marked as dead code.
 
-    Queries the storage backend for nodes where ``is_dead`` is ``True``.
+    Delegates to :func:`~axon.mcp.resources.get_dead_code_list` for the
+    shared query and formatting.
 
     Args:
         storage: The storage backend.
 
     Returns:
-        Formatted list of dead code symbols with file and label.
+        Formatted list of dead code symbols grouped by file.
     """
-    try:
-        rows = storage.execute_raw(
-            "MATCH (n) WHERE n.is_dead = true RETURN n.id, n.name, n.file_path"
-        )
-    except Exception:
-        rows = []
+    from axon.mcp.resources import get_dead_code_list
 
-    if not rows:
-        return "No dead code detected."
-
-    lines = [f"Dead code ({len(rows)} symbols):"]
-    lines.append("")
-    for i, row in enumerate(rows, 1):
-        node_id = row[0] if row else ""
-        name = row[1] if len(row) > 1 else "?"
-        file_path = row[2] if len(row) > 2 else "?"
-        label = node_id.split(":", 1)[0].title() if node_id else "Unknown"
-        lines.append(f"  {i}. {name} ({label}) -- {file_path}")
-
-    lines.append("")
-    lines.append("Tip: Consider removing or refactoring these symbols.")
-    return "\n".join(lines)
+    return get_dead_code_list(storage)
 
 _DIFF_FILE_PATTERN = re.compile(r"^diff --git a/(.+?) b/(.+?)$", re.MULTILINE)
 _DIFF_HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
@@ -294,22 +274,17 @@ def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
                 label_prefix = node_id.split(":", 1)[0] if node_id else ""
                 for start, end in ranges:
                     if start_line <= end and end_line >= start:
-                        sym = SimpleNamespace(
-                            name=name, label=SimpleNamespace(value=label_prefix),
-                            start_line=start_line, end_line=end_line,
+                        affected_symbols.append(
+                            (name, label_prefix.title(), start_line, end_line)
                         )
-                        affected_symbols.append(sym)
                         break
         except Exception:
             pass
 
         lines.append(f"  {file_path}:")
         if affected_symbols:
-            for sym in affected_symbols:
-                label = sym.label.value.title() if sym.label else "Unknown"
-                lines.append(
-                    f"    - {sym.name} ({label}) lines {sym.start_line}-{sym.end_line}"
-                )
+            for sym_name, label, s_line, e_line in affected_symbols:
+                lines.append(f"    - {sym_name} ({label}) lines {s_line}-{e_line}")
                 total_affected += 1
         else:
             lines.append("    (no indexed symbols in changed lines)")

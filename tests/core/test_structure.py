@@ -6,7 +6,8 @@ import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel, RelType, generate_id
-from axon.core.ingestion.structure import FileInfo, process_structure
+from axon.core.ingestion.structure import process_structure
+from axon.core.ingestion.walker import FileEntry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -21,7 +22,7 @@ def graph() -> KnowledgeGraph:
 
 def _make_files(*paths: str, content: str = "", language: str = "python") -> list[FileInfo]:
     """Build a list of FileInfo entries from paths with shared defaults."""
-    return [FileInfo(path=p, content=content, language=language) for p in paths]
+    return [FileEntry(path=p, content=content, language=language) for p in paths]
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ class TestFileNodeProperties:
 
     def test_file_node_properties(self, graph: KnowledgeGraph) -> None:
         files = [
-            FileInfo(
+            FileEntry(
                 path="src/auth/validate.py",
                 content="def validate(): pass",
                 language="python",
@@ -193,6 +194,6 @@ class TestEmptyFileList:
     def test_empty_file_list(self, graph: KnowledgeGraph) -> None:
         process_structure([], graph)
 
-        assert graph.nodes == []
-        assert graph.relationships == []
+        assert list(graph.iter_nodes()) == []
+        assert list(graph.iter_relationships()) == []
         assert graph.stats() == {"nodes": 0, "relationships": 0}

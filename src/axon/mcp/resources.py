@@ -7,10 +7,8 @@ that MCP clients can fetch.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from axon.core.storage.base import StorageBackend
 
-if TYPE_CHECKING:
-    from axon.core.storage.base import StorageBackend
 
 def get_overview(storage: StorageBackend) -> str:
     """Generate a high-level overview of the indexed codebase.

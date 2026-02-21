@@ -23,14 +23,6 @@ _SYMBOL_LABELS: tuple[NodeLabel, ...] = (
 
 _CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__"})
 
-def _is_constructor(name: str) -> bool:
-    """Return ``True`` if *name* is a Python constructor method."""
-    return name in _CONSTRUCTOR_NAMES
-
-def _is_test_function(name: str) -> bool:
-    """Return ``True`` if *name* looks like a test function (``test_*``)."""
-    return name.startswith("test_")
-
 def _is_test_class(name: str) -> bool:
     """Return ``True`` if *name* follows pytest class convention (``Test*``).
 
@@ -53,10 +45,6 @@ def _is_dunder(name: str) -> bool:
     between (e.g. ``__str__``, ``__repr__``).
     """
     return name.startswith("__") and name.endswith("__") and len(name) > 4
-
-def _has_incoming_calls(graph: KnowledgeGraph, node_id: str) -> bool:
-    """Return ``True`` if *node_id* has at least one incoming CALLS edge."""
-    return graph.has_incoming(node_id, RelType.CALLS)
 
 def _is_type_referenced(graph: KnowledgeGraph, node_id: str, label: NodeLabel) -> bool:
     """Return ``True`` if *node_id* is a class with incoming USES_TYPE edges.
@@ -84,6 +72,11 @@ def _has_framework_decorator(node: GraphNode) -> bool:
     decorators: list[str] = node.properties.get("decorators", [])
     return any("." in dec and dec not in _NON_FRAMEWORK_DECORATORS for dec in decorators)
 
+def _has_property_decorator(node: GraphNode) -> bool:
+    """Return ``True`` if *node* is a ``@property`` (accessed as attribute, not called)."""
+    decorators: list[str] = node.properties.get("decorators", [])
+    return "property" in decorators
+
 def _is_python_public_api(name: str, file_path: str) -> bool:
     """Return ``True`` if *name* is a public symbol in an ``__init__.py`` file."""
     return file_path.endswith("__init__.py") and not name.startswith("_")
@@ -107,8 +100,8 @@ def _is_exempt(
     return (
         is_entry_point
         or is_exported
-        or _is_constructor(name)
-        or _is_test_function(name)
+        or name in _CONSTRUCTOR_NAMES
+        or name.startswith("test_")
         or _is_test_class(name)
         or _is_test_file(file_path)
         or _is_dunder(name)
@@ -218,6 +211,34 @@ def _clear_protocol_conformance_false_positives(graph: KnowledgeGraph) -> int:
 
     return cleared
 
+def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
+    """Un-flag methods on Protocol classes.
+
+    Protocol stubs define the interface contract — they are never called
+    directly (calls resolve to concrete implementations).  Flagging them
+    as dead is always a false positive.
+
+    Returns the number of methods un-flagged.
+    """
+    protocol_class_names: set[str] = set()
+    for cls_node in graph.get_nodes_by_label(NodeLabel.CLASS):
+        if cls_node.properties.get("is_protocol"):
+            protocol_class_names.add(cls_node.name)
+
+    if not protocol_class_names:
+        return 0
+
+    cleared = 0
+    for method in graph.get_nodes_by_label(NodeLabel.METHOD):
+        if not method.is_dead or not method.class_name:
+            continue
+        if method.class_name in protocol_class_names:
+            method.is_dead = False
+            cleared += 1
+            logger.debug("Un-flagged protocol stub: %s.%s", method.class_name, method.name)
+
+    return cleared
+
 def process_dead_code(graph: KnowledgeGraph) -> int:
     """Detect dead (unreachable) symbols and flag them in the graph.
 
@@ -249,11 +270,13 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
         for node in graph.get_nodes_by_label(label):
             if _is_exempt(node.name, node.is_entry_point, node.is_exported, node.file_path):
                 continue
-            if _has_incoming_calls(graph, node.id):
+            if graph.has_incoming(node.id, RelType.CALLS):
                 continue
             if _is_type_referenced(graph, node.id, label):
                 continue
             if _has_framework_decorator(node):
+                continue
+            if _has_property_decorator(node):
                 continue
 
             node.is_dead = True
@@ -267,5 +290,9 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
     # Third pass: un-flag methods on classes that structurally conform to a Protocol.
     protocol_cleared = _clear_protocol_conformance_false_positives(graph)
     dead_count -= protocol_cleared
+
+    # Fourth pass: un-flag Protocol class stubs (interface contracts, never called directly).
+    stub_cleared = _clear_protocol_stub_false_positives(graph)
+    dead_count -= stub_cleared
 
     return dead_count

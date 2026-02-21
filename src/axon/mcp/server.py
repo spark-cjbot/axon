@@ -40,41 +40,26 @@ logger = logging.getLogger(__name__)
 
 server = Server("axon")
 
-class _StorageHolder:
-    """Encapsulates lazy-initialised storage to avoid module-level globals."""
-
-    def __init__(self) -> None:
-        self._storage: KuzuBackend | None = None
-
-    def get(self) -> KuzuBackend:
-        """Lazily initialise the KuzuDB storage backend.
-
-        Looks for a ``.axon/kuzu`` directory in the current working directory.
-        If it exists, the backend is initialised from that path.  Otherwise a
-        bare (uninitialised) backend is returned so that tools can still be
-        called without crashing.
-        """
-        if self._storage is None:
-            self._storage = KuzuBackend()
-            db_path = Path.cwd() / ".axon" / "kuzu"
-            if db_path.exists():
-                self._storage.initialize(db_path, read_only=True)
-                logger.info("Initialised storage (read-only) from %s", db_path)
-            else:
-                logger.warning("No .axon/kuzu directory found in %s", Path.cwd())
-        return self._storage
-
-    def close(self) -> None:
-        """Close the storage backend if open."""
-        if self._storage is not None:
-            self._storage.close()
-            self._storage = None
-
-_holder = _StorageHolder()
+_storage: KuzuBackend | None = None
 
 def _get_storage() -> KuzuBackend:
-    """Return the lazily-initialised storage backend."""
-    return _holder.get()
+    """Lazily initialise and return the KuzuDB storage backend.
+
+    Looks for a ``.axon/kuzu`` directory in the current working directory.
+    If it exists, the backend is initialised from that path.  Otherwise a
+    bare (uninitialised) backend is returned so that tools can still be
+    called without crashing.
+    """
+    global _storage  # noqa: PLW0603
+    if _storage is None:
+        _storage = KuzuBackend()
+        db_path = Path.cwd() / ".axon" / "kuzu"
+        if db_path.exists():
+            _storage.initialize(db_path, read_only=True)
+            logger.info("Initialised storage (read-only) from %s", db_path)
+        else:
+            logger.warning("No .axon/kuzu directory found in %s", Path.cwd())
+    return _storage
 
 TOOLS: list[Tool] = [
     Tool(

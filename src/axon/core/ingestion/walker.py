@@ -59,17 +59,17 @@ def discover_files(
 
     return discovered
 
-def _read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
+def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
     """Read a single file and return a :class:`FileEntry`, or ``None`` on failure.
 
-    Returns ``None`` when the file cannot be decoded as UTF-8 (binary files)
-    or when the file is empty.
+    Returns ``None`` when the file cannot be decoded as UTF-8 (binary files),
+    when the file is empty, or when an OS-level error occurs.
     """
     relative = file_path.relative_to(repo_path)
 
     try:
         content = file_path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, OSError):
         return None
 
     if not content:
@@ -115,7 +115,7 @@ def walk_repo(
     file_paths = discover_files(repo_path, gitignore_patterns)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = executor.map(lambda fp: _read_file(repo_path, fp), file_paths)
+        results = executor.map(lambda fp: read_file(repo_path, fp), file_paths)
 
     entries = [entry for entry in results if entry is not None]
     entries.sort(key=lambda e: e.path)

@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from axon.core.ingestion.pipeline import reindex_files, run_pipeline
-from axon.core.ingestion.watcher import _read_file_entry, _reindex_files
-from axon.core.ingestion.walker import FileEntry
+from axon.core.ingestion.watcher import _reindex_files
+from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.kuzu_backend import KuzuBackend
 
 
@@ -57,7 +57,7 @@ class TestReadFileEntry:
     """_read_file_entry reads a file and returns a FileEntry."""
 
     def test_reads_python_file(self, tmp_repo: Path) -> None:
-        entry = _read_file_entry(tmp_repo, tmp_repo / "src" / "app.py")
+        entry = read_file(tmp_repo, tmp_repo / "src" / "app.py")
 
         assert entry is not None
         assert entry.path == "src/app.py"
@@ -68,12 +68,12 @@ class TestReadFileEntry:
         readme = tmp_repo / "README.md"
         readme.write_text("# readme", encoding="utf-8")
 
-        entry = _read_file_entry(tmp_repo, readme)
+        entry = read_file(tmp_repo, readme)
 
         assert entry is None
 
     def test_returns_none_for_missing(self, tmp_repo: Path) -> None:
-        entry = _read_file_entry(tmp_repo, tmp_repo / "nonexistent.py")
+        entry = read_file(tmp_repo, tmp_repo / "nonexistent.py")
 
         assert entry is None
 
@@ -81,7 +81,7 @@ class TestReadFileEntry:
         empty = tmp_repo / "empty.py"
         empty.write_text("", encoding="utf-8")
 
-        entry = _read_file_entry(tmp_repo, empty)
+        entry = read_file(tmp_repo, empty)
 
         assert entry is None
 

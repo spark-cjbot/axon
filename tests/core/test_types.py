@@ -13,7 +13,10 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.ingestion.parser_phase import FileParseData
-from axon.core.ingestion.types import build_type_index, process_types
+from axon.core.ingestion.symbol_lookup import build_name_index
+from axon.core.ingestion.types import process_types
+
+_TYPE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.TYPE_ALIAS)
 from axon.core.parsers.base import ParseResult, TypeRef
 
 
@@ -141,7 +144,7 @@ class TestBuildTypeIndex:
     """build_type_index creates correct mapping from graph type nodes."""
 
     def test_build_type_index(self, graph: KnowledgeGraph) -> None:
-        index = build_type_index(graph)
+        index = build_name_index(graph, _TYPE_LABELS)
 
         # Class and Interface nodes should appear.
         assert "User" in index
@@ -171,7 +174,7 @@ class TestBuildTypeIndex:
         _add_file_node(g, "src/aliases.py")
         _add_symbol_node(g, NodeLabel.TYPE_ALIAS, "src/aliases.py", "UserID", 1, 1)
 
-        index = build_type_index(g)
+        index = build_name_index(g, _TYPE_LABELS)
         assert "UserID" in index
         assert len(index["UserID"]) == 1
 
@@ -183,7 +186,7 @@ class TestBuildTypeIndex:
         _add_symbol_node(g, NodeLabel.CLASS, "src/a.py", "Base", 1, 10)
         _add_symbol_node(g, NodeLabel.CLASS, "src/b.py", "Base", 1, 10)
 
-        index = build_type_index(g)
+        index = build_name_index(g, _TYPE_LABELS)
         assert "Base" in index
         assert len(index["Base"]) == 2
 

@@ -13,6 +13,27 @@ from collections import defaultdict
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel
 
+
+def build_name_index(
+    graph: KnowledgeGraph,
+    labels: tuple[NodeLabel, ...],
+) -> dict[str, list[str]]:
+    """Build a mapping from symbol names to their node IDs.
+
+    Iterates over all nodes matching the given *labels* and groups
+    them by name.  Multiple symbols can share the same name across
+    different files, so each entry maps to a list of node IDs.
+
+    This is the shared implementation used by calls, heritage, and
+    type analysis phases.
+    """
+    index: dict[str, list[str]] = {}
+    for label in labels:
+        for node in graph.get_nodes_by_label(label):
+            index.setdefault(node.name, []).append(node.id)
+    return index
+
+
 class FileSymbolIndex:
     """Pre-built per-file interval index for fast containment lookups.
 

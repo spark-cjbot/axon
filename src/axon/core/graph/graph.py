@@ -34,16 +34,6 @@ class KnowledgeGraph:
         self._outgoing: dict[str, dict[str, GraphRelationship]] = defaultdict(dict)
         self._incoming: dict[str, dict[str, GraphRelationship]] = defaultdict(dict)
 
-    @property
-    def nodes(self) -> list[GraphNode]:
-        """Return all nodes as a list."""
-        return list(self._nodes.values())
-
-    @property
-    def relationships(self) -> list[GraphRelationship]:
-        """Return all relationships as a list."""
-        return list(self._relationships.values())
-
     def iter_nodes(self) -> Iterator[GraphNode]:
         """Yield all nodes without creating an intermediate list."""
         return iter(self._nodes.values())
@@ -116,8 +106,8 @@ class KnowledgeGraph:
             node = self._nodes.pop(nid)
             self._by_label[node.label].pop(nid, None)
 
-        ids_set = set(ids_to_remove)
-        self._cascade_relationships_for_nodes(ids_set)
+        for nid in ids_to_remove:
+            self._cascade_relationships_for_node(nid)
         return len(ids_to_remove)
 
     def add_relationship(self, rel: GraphRelationship) -> None:
@@ -182,7 +172,3 @@ class KnowledgeGraph:
             self._by_rel_type.get(rel.type, {}).pop(rel.id, None)
             self._outgoing.get(rel.source, {}).pop(rel.id, None)
 
-    def _cascade_relationships_for_nodes(self, node_ids: set[str]) -> None:
-        """Remove all relationships referencing any node in *node_ids*."""
-        for nid in node_ids:
-            self._cascade_relationships_for_node(nid)

@@ -36,7 +36,7 @@ from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
 from axon.core.ingestion.parser_phase import process_parsing
 from axon.core.ingestion.processes import process_processes
-from axon.core.ingestion.structure import FileInfo, process_structure
+from axon.core.ingestion.structure import process_structure
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import StorageBackend
@@ -65,11 +65,15 @@ _SYMBOL_LABELS: frozenset[NodeLabel] = frozenset(NodeLabel) - {
 
 def run_pipeline(
     repo_path: Path,
-    storage: StorageBackend,
+    storage: StorageBackend | None = None,
     full: bool = False,
     progress_callback: Callable[[str, float], None] | None = None,
-) -> PipelineResult:
-    """Run phases 1-11 of the ingestion pipeline and load results into storage.
+) -> tuple[KnowledgeGraph, PipelineResult]:
+    """Run phases 1-11 of the ingestion pipeline.
+
+    When *storage* is provided the graph is bulk-loaded into it after
+    all phases complete.  When ``None``, only the in-memory graph is
+    returned (useful for branch comparison snapshots).
 
     Parameters
     ----------
@@ -77,6 +81,7 @@ def run_pipeline(
         Root directory of the repository to analyse.
     storage:
         An already-initialised :class:`StorageBackend` to persist the graph.
+        Pass ``None`` to skip storage loading.
     full:
         When ``True``, skip incremental-diff logic (Phase 0) and force a full
         re-index.  Currently Phase 0 is a no-op regardless of this flag.
@@ -86,8 +91,8 @@ def run_pipeline(
 
     Returns
     -------
-    PipelineResult
-        A summary dataclass with counts and timings.
+    tuple[KnowledgeGraph, PipelineResult]
+        The populated graph and a summary dataclass with counts and timings.
     """
     start = time.monotonic()
     result = PipelineResult()
@@ -105,11 +110,7 @@ def run_pipeline(
     graph = KnowledgeGraph()
 
     report("Processing structure", 0.0)
-    file_infos = [
-        FileInfo(path=f.path, content=f.content, language=f.language)
-        for f in files
-    ]
-    process_structure(file_infos, graph)
+    process_structure(files, graph)
     report("Processing structure", 1.0)
 
     report("Parsing code", 0.0)
@@ -148,15 +149,16 @@ def run_pipeline(
     result.coupled_pairs = process_coupling(graph, repo_path)
     report("Analyzing git history", 1.0)
 
-    report("Loading to storage", 0.0)
-    storage.bulk_load(graph)
-    report("Loading to storage", 1.0)
+    if storage is not None:
+        report("Loading to storage", 0.0)
+        storage.bulk_load(graph)
+        report("Loading to storage", 1.0)
 
     result.symbols = sum(1 for n in graph.iter_nodes() if n.label in _SYMBOL_LABELS)
     result.relationships = graph.relationship_count
     result.duration_seconds = time.monotonic() - start
 
-    return result
+    return graph, result
 
 def reindex_files(
     file_entries: list[FileEntry],
@@ -188,19 +190,15 @@ def reindex_files(
 
     graph = KnowledgeGraph()
 
-    file_infos = [
-        FileInfo(path=f.path, content=f.content, language=f.language)
-        for f in file_entries
-    ]
-    process_structure(file_infos, graph)
+    process_structure(file_entries, graph)
     parse_data = process_parsing(file_entries, graph)
     process_imports(parse_data, graph)
     process_calls(parse_data, graph)
     process_heritage(parse_data, graph)
     process_types(parse_data, graph)
 
-    storage.add_nodes(graph.nodes)
-    storage.add_relationships(graph.relationships)
+    storage.add_nodes(list(graph.iter_nodes()))
+    storage.add_relationships(list(graph.iter_relationships()))
     storage.rebuild_fts_indexes()
 
     return graph
@@ -210,35 +208,6 @@ def build_graph(repo_path: Path) -> KnowledgeGraph:
 
     This is used by branch comparison to build a graph snapshot without
     needing a storage backend.
-
-    Parameters
-    ----------
-    repo_path:
-        Root directory of the repository to analyse.
-
-    Returns
-    -------
-    KnowledgeGraph
-        The fully populated in-memory graph.
     """
-    gitignore = load_gitignore(repo_path)
-    files = walk_repo(repo_path, gitignore)
-
-    graph = KnowledgeGraph()
-
-    file_infos = [
-        FileInfo(path=f.path, content=f.content, language=f.language)
-        for f in files
-    ]
-    process_structure(file_infos, graph)
-    parse_data = process_parsing(files, graph)
-    process_imports(parse_data, graph)
-    process_calls(parse_data, graph)
-    process_heritage(parse_data, graph)
-    process_types(parse_data, graph)
-    process_communities(graph)
-    process_processes(graph)
-    process_dead_code(graph)
-    process_coupling(graph, repo_path)
-
+    graph, _ = run_pipeline(repo_path)
     return graph

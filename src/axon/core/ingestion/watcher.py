@@ -16,8 +16,8 @@ import time
 from pathlib import Path
 
 from axon.config.ignore import load_gitignore, should_ignore
-from axon.config.languages import get_language, is_supported
-from axon.core.ingestion.walker import FileEntry
+from axon.config.languages import is_supported
+from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -25,23 +25,6 @@ logger = logging.getLogger(__name__)
 # Timer thresholds (seconds).
 GLOBAL_PHASE_INTERVAL = 30
 EMBEDDING_INTERVAL = 60
-
-def _read_file_entry(repo_path: Path, abs_path: Path) -> FileEntry | None:
-    """Read a single file and return a FileEntry, or None on failure."""
-    try:
-        content = abs_path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, ValueError, OSError):
-        return None
-
-    if not content:
-        return None
-
-    language = get_language(abs_path)
-    if language is None:
-        return None
-
-    relative = str(abs_path.relative_to(repo_path))
-    return FileEntry(path=relative, content=content, language=language)
 
 def _reindex_files(
     changed_paths: list[Path],
@@ -80,7 +63,7 @@ def _reindex_files(
         if not is_supported(abs_path):
             continue
 
-        entry = _read_file_entry(repo_path, abs_path)
+        entry = read_file(repo_path, abs_path)
         if entry is not None:
             entries.append(entry)
 
@@ -98,7 +81,7 @@ def _run_global_phases(storage: StorageBackend, repo_path: Path) -> None:
     """
     from axon.core.ingestion.pipeline import run_pipeline
 
-    run_pipeline(repo_path, storage, full=True)
+    run_pipeline(repo_path, storage=storage, full=True)
     logger.info("Global phases completed")
 
 async def watch_repo(

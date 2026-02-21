@@ -13,12 +13,14 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.ingestion.calls import (
-    build_call_index,
     process_calls,
     resolve_call,
 )
 from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import CallInfo, ParseResult, SymbolInfo
+
+_CALLABLE_LABELS = (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS)
 
 
 # ---------------------------------------------------------------------------
@@ -137,15 +139,15 @@ def parse_data() -> list[FileParseData]:
 
 
 # ---------------------------------------------------------------------------
-# build_call_index
+# build_name_index (callable labels)
 # ---------------------------------------------------------------------------
 
 
 class TestBuildCallIndex:
-    """build_call_index creates correct mapping from graph symbol nodes."""
+    """build_name_index creates correct mapping from graph symbol nodes."""
 
     def test_build_call_index(self, graph: KnowledgeGraph) -> None:
-        index = build_call_index(graph)
+        index = build_name_index(graph, _CALLABLE_LABELS)
 
         # All four functions should appear.
         assert "validate" in index
@@ -169,7 +171,7 @@ class TestBuildCallIndex:
         _add_file_node(g, "src/models.py")
         _add_symbol_node(g, NodeLabel.CLASS, "src/models.py", "User", 1, 20)
 
-        index = build_call_index(g)
+        index = build_name_index(g, _CALLABLE_LABELS)
         assert "User" in index
         assert len(index["User"]) == 1
 
@@ -181,7 +183,7 @@ class TestBuildCallIndex:
         _add_symbol_node(g, NodeLabel.FUNCTION, "src/a.py", "init", 1, 5)
         _add_symbol_node(g, NodeLabel.FUNCTION, "src/b.py", "init", 1, 5)
 
-        index = build_call_index(g)
+        index = build_name_index(g, _CALLABLE_LABELS)
         assert "init" in index
         assert len(index["init"]) == 2
 
@@ -195,7 +197,7 @@ class TestResolveCallSameFile:
     """hash_password call in auth.py resolves locally (confidence 1.0)."""
 
     def test_resolve_call_same_file(self, graph: KnowledgeGraph) -> None:
-        index = build_call_index(graph)
+        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="hash_password", line=5)
 
         target_id, confidence = resolve_call(
@@ -218,7 +220,7 @@ class TestResolveCallGlobal:
     """validate call in app.py resolves globally (confidence 0.5)."""
 
     def test_resolve_call_global(self, graph: KnowledgeGraph) -> None:
-        index = build_call_index(graph)
+        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="validate", line=8)
 
         target_id, confidence = resolve_call(
@@ -241,7 +243,7 @@ class TestResolveCallUnresolved:
     """Call to unknown function returns None."""
 
     def test_resolve_call_unresolved(self, graph: KnowledgeGraph) -> None:
-        index = build_call_index(graph)
+        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="nonexistent_function", line=3)
 
         target_id, confidence = resolve_call(
@@ -392,7 +394,7 @@ class TestResolveMethodCallSelf:
             class_name="AuthService",
         )
 
-        index = build_call_index(g)
+        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="check_token", line=10, receiver="self")
 
         target_id, confidence = resolve_call(
@@ -428,7 +430,7 @@ class TestResolveMethodCallSelf:
             class_name="AuthService",
         )
 
-        index = build_call_index(g)
+        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="checkToken", line=10, receiver="this")
 
         target_id, confidence = resolve_call(
@@ -477,7 +479,7 @@ class TestResolveCallImportResolved:
             )
         )
 
-        index = build_call_index(g)
+        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="validate", line=8)
 
         target_id, confidence = resolve_call(

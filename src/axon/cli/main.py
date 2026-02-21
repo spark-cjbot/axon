@@ -29,7 +29,7 @@ def _load_storage(repo_path: Path | None = None) -> "KuzuBackend":  # noqa: F821
         raise typer.Exit(code=1)
 
     storage = KuzuBackend()
-    storage.initialize(db_path)
+    storage.initialize(db_path, read_only=True)
     return storage
 
 app = typer.Typer(
@@ -92,7 +92,7 @@ def analyze(
         def on_progress(phase: str, pct: float) -> None:
             progress.update(task, description=f"{phase} ({pct:.0%})")
 
-        result = run_pipeline(
+        _, result = run_pipeline(
             repo_path=repo_path,
             storage=storage,
             full=full,

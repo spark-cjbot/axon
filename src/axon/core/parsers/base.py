@@ -6,6 +6,7 @@ before the data is mapped into the knowledge graph.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 @dataclass
@@ -59,8 +60,8 @@ class ParseResult:
         default_factory=list
     )  # (class_name, kind, parent_name) where kind is "extends" or "implements"
 
-class LanguageParser:
+class LanguageParser(ABC):
     """Base interface for language-specific parsers."""
 
-    def parse(self, content: str, file_path: str) -> ParseResult:
-        raise NotImplementedError
+    @abstractmethod
+    def parse(self, content: str, file_path: str) -> ParseResult: ...

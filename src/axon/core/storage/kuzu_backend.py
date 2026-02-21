@@ -14,15 +14,13 @@ import logging
 import tempfile
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import kuzu
 
+from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel
 from axon.core.storage.base import NodeEmbedding, SearchResult
-
-if TYPE_CHECKING:
-    from axon.core.graph.graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
@@ -140,24 +138,18 @@ class KuzuBackend:
         """Delete all nodes whose ``file_path`` matches across every table.
 
         Returns:
-            The number of nodes removed.
+            Always 0 — exact count is not tracked for performance.
         """
         assert self._conn is not None
-        total = 0
         for table in _NODE_TABLE_NAMES:
             try:
-                count_q = f"MATCH (n:{table}) WHERE n.file_path = $fp RETURN count(n)"
-                result = self._conn.execute(count_q, parameters={"fp": file_path})
-                count = 0
-                if result.has_next():
-                    count = result.get_next()[0]
-                if count > 0:
-                    delete_q = f"MATCH (n:{table}) WHERE n.file_path = $fp DETACH DELETE n"
-                    self._conn.execute(delete_q, parameters={"fp": file_path})
-                    total += count
+                self._conn.execute(
+                    f"MATCH (n:{table}) WHERE n.file_path = $fp DETACH DELETE n",
+                    parameters={"fp": file_path},
+                )
             except Exception:
                 logger.debug("Failed to remove nodes from table %s", table, exc_info=True)
-        return total
+        return 0
 
     def get_node(self, node_id: str) -> GraphNode | None:
         """Return a single node by ID, or ``None`` if not found."""
@@ -218,11 +210,12 @@ class KuzuBackend:
         )
         return self._query_nodes(query, parameters={"nid": node_id})
 
-    def traverse(self, start_id: str, depth: int) -> list[GraphNode]:
+    def traverse(self, start_id: str, depth: int, direction: str = "callers") -> list[GraphNode]:
         """BFS traversal through CALLS edges up to *depth* hops.
 
-        Uses manual BFS via ``get_callees`` to ensure only CALLS relationships
-        are followed (KuzuDB recursive paths cannot filter by rel_type).
+        Args:
+            direction: ``"callers"`` follows incoming CALLS (blast radius),
+                       ``"callees"`` follows outgoing CALLS (dependencies).
         """
         assert self._conn is not None
         if _table_for_id(start_id) is None:
@@ -244,10 +237,14 @@ class KuzuBackend:
                     result_list.append(node)
 
             if current_depth < depth:
-                callees = self.get_callees(current_id)
-                for callee in callees:
-                    if callee.id not in visited:
-                        queue.append((callee.id, current_depth + 1))
+                neighbors = (
+                    self.get_callers(current_id)
+                    if direction == "callers"
+                    else self.get_callees(current_id)
+                )
+                for neighbor in neighbors:
+                    if neighbor.id not in visited:
+                        queue.append((neighbor.id, current_depth + 1))
 
         return result_list
 
@@ -335,7 +332,16 @@ class KuzuBackend:
                     signature = row[4] or ""
                     bm25_score = float(row[5]) if row[5] is not None else 0.0
 
+                    # Demote test file results — mirrors exact_name_search penalty.
+                    if "/tests/" in file_path or "/test_" in file_path:
+                        bm25_score *= 0.5
+
                     label_prefix = node_id.split(":", 1)[0] if node_id else ""
+
+                    # Boost top-level definitions in source files.
+                    if label_prefix in ("function", "class") and "/tests/" not in file_path:
+                        bm25_score *= 1.2
+
                     snippet = content[:200] if content else signature[:200]
 
                     candidates.append(
@@ -530,10 +536,10 @@ class KuzuBackend:
                 pass
 
         if not self._bulk_load_nodes_csv(graph):
-            self.add_nodes(graph.nodes)
+            self.add_nodes(list(graph.iter_nodes()))
 
         if not self._bulk_load_rels_csv(graph):
-            self.add_relationships(graph.relationships)
+            self.add_relationships(list(graph.iter_relationships()))
 
         self.rebuild_fts_indexes()
 
@@ -558,15 +564,30 @@ class KuzuBackend:
             except Exception:
                 logger.debug("FTS index rebuild failed for %s", table, exc_info=True)
 
+    def _csv_copy(self, table: str, rows: list[list[Any]]) -> None:
+        """Write *rows* to a temporary CSV and COPY FROM into *table*.
+
+        Always cleans up the temp file, even on failure.
+        """
+        assert self._conn is not None
+        csv_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".csv", delete=False, newline=""
+            ) as f:
+                writer = csv.writer(f)
+                writer.writerows(rows)
+                csv_path = f.name
+            self._conn.execute(f'COPY {table} FROM "{csv_path}" (HEADER=false)')
+        finally:
+            if csv_path:
+                Path(csv_path).unlink(missing_ok=True)
+
     def _bulk_load_nodes_csv(self, graph: KnowledgeGraph) -> bool:
         """Load all nodes via temporary CSV files + COPY FROM.
 
-        Groups nodes by table, writes one CSV per table, and uses
-        KuzuDB's COPY FROM for bulk ingestion.
-
         Returns True on success, False if COPY FROM is not available.
         """
-        assert self._conn is not None
         by_table: dict[str, list[GraphNode]] = {}
         for node in graph.iter_nodes():
             table = _LABEL_TO_TABLE.get(node.label.value)
@@ -575,31 +596,13 @@ class KuzuBackend:
 
         try:
             for table, nodes in by_table.items():
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".csv", delete=False, newline=""
-                ) as f:
-                    writer = csv.writer(f)
-                    for node in nodes:
-                        writer.writerow([
-                            node.id,
-                            node.name,
-                            node.file_path,
-                            node.start_line,
-                            node.end_line,
-                            node.content,
-                            node.signature,
-                            node.language,
-                            node.class_name,
-                            node.is_dead,
-                            node.is_entry_point,
-                            node.is_exported,
-                        ])
-                    csv_path = f.name
-
-                self._conn.execute(
-                    f'COPY {table} FROM "{csv_path}" (HEADER=false)'
-                )
-                Path(csv_path).unlink(missing_ok=True)
+                self._csv_copy(table, [
+                    [node.id, node.name, node.file_path, node.start_line,
+                     node.end_line, node.content, node.signature, node.language,
+                     node.class_name, node.is_dead, node.is_entry_point,
+                     node.is_exported]
+                    for node in nodes
+                ])
             return True
         except Exception:
             logger.debug("CSV bulk_load_nodes failed, falling back", exc_info=True)
@@ -608,12 +611,8 @@ class KuzuBackend:
     def _bulk_load_rels_csv(self, graph: KnowledgeGraph) -> bool:
         """Load all relationships via temporary CSV files + COPY FROM.
 
-        Groups relationships by (src_table, dst_table) combination and
-        writes one CSV per group.
-
         Returns True on success, False if COPY FROM is not available.
         """
-        assert self._conn is not None
         by_pair: dict[tuple[str, str], list[GraphRelationship]] = {}
         for rel in graph.iter_relationships():
             src_table = _table_for_id(rel.source)
@@ -623,31 +622,16 @@ class KuzuBackend:
 
         try:
             for (src_table, dst_table), rels in by_pair.items():
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".csv", delete=False, newline=""
-                ) as f:
-                    writer = csv.writer(f)
-                    for rel in rels:
-                        props = rel.properties or {}
-                        writer.writerow([
-                            rel.source,
-                            rel.target,
-                            rel.type.value,
-                            float(props.get("confidence", 1.0)),
-                            str(props.get("role", "")),
-                            int(props.get("step_number", 0)),
-                            float(props.get("strength", 0.0)),
-                            int(props.get("co_changes", 0)),
-                            str(props.get("symbols", "")),
-                        ])
-                    csv_path = f.name
-
-                # KuzuDB rel table names for groups: CodeRelation_{src}_{dst}
-                rel_table = f"CodeRelation_{src_table}_{dst_table}"
-                self._conn.execute(
-                    f'COPY {rel_table} FROM "{csv_path}" (HEADER=false)'
-                )
-                Path(csv_path).unlink(missing_ok=True)
+                self._csv_copy(f"CodeRelation_{src_table}_{dst_table}", [
+                    [rel.source, rel.target, rel.type.value,
+                     float((rel.properties or {}).get("confidence", 1.0)),
+                     str((rel.properties or {}).get("role", "")),
+                     int((rel.properties or {}).get("step_number", 0)),
+                     float((rel.properties or {}).get("strength", 0.0)),
+                     int((rel.properties or {}).get("co_changes", 0)),
+                     str((rel.properties or {}).get("symbols", ""))]
+                    for rel in rels
+                ])
             return True
         except Exception:
             logger.debug("CSV bulk_load_rels failed, falling back", exc_info=True)
@@ -665,27 +649,18 @@ class KuzuBackend:
             except Exception:
                 pass
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".csv", delete=False, newline=""
-            ) as f:
-                writer = csv.writer(f)
-                for emb in embeddings:
-                    # Write vector as a bracketed list string for KuzuDB.
-                    vec_str = "[" + ",".join(str(v) for v in emb.embedding) + "]"
-                    writer.writerow([emb.node_id, vec_str])
-                csv_path = f.name
-
-            self._conn.execute(
-                f'COPY Embedding FROM "{csv_path}" (HEADER=false)'
-            )
-            Path(csv_path).unlink(missing_ok=True)
+            self._csv_copy("Embedding", [
+                [emb.node_id,
+                 "[" + ",".join(str(v) for v in emb.embedding) + "]"]
+                for emb in embeddings
+            ])
             return True
         except Exception:
             logger.debug("CSV bulk_store_embeddings failed, falling back", exc_info=True)
             return False
 
     def _create_schema(self) -> None:
-        """Create node tables, the CodeRelation relationship table group, and the Embedding table."""
+        """Create node/rel/embedding tables and the FTS extension."""
         assert self._conn is not None
 
         try:

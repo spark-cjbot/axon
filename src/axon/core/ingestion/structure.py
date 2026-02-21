@@ -6,8 +6,8 @@ knowledge graph with File and Folder nodes connected by CONTAINS relationships.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import TYPE_CHECKING
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -18,15 +18,10 @@ from axon.core.graph.model import (
     generate_id,
 )
 
-@dataclass
-class FileInfo:
-    """Minimal file info needed by the structure processor."""
+if TYPE_CHECKING:
+    from axon.core.ingestion.walker import FileEntry
 
-    path: str  # relative path
-    content: str
-    language: str
-
-def process_structure(files: list[FileInfo], graph: KnowledgeGraph) -> None:
+def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
     """Build File/Folder nodes and CONTAINS relationships from a list of files.
 
     For every file entry a :pyclass:`NodeLabel.FILE` node is created.  Every

@@ -80,7 +80,7 @@ class TestAddGetNode:
         n2 = _make_node(name="b")
         graph.add_node(n1)
         graph.add_node(n2)
-        assert set(n.id for n in graph.nodes) == {n1.id, n2.id}
+        assert set(n.id for n in list(graph.iter_nodes())) == {n1.id, n2.id}
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ class TestAddRelationship:
         rel = _make_rel(n1.id, n2.id)
         graph.add_relationship(rel)
 
-        assert graph.relationships == [rel]
+        assert list(graph.iter_relationships()) == [rel]
 
     def test_relationships_property_returns_all(self, graph: KnowledgeGraph) -> None:
         n1 = _make_node(name="a")
@@ -113,7 +113,7 @@ class TestAddRelationship:
         graph.add_relationship(r1)
         graph.add_relationship(r2)
 
-        assert set(r.id for r in graph.relationships) == {"r1", "r2"}
+        assert set(r.id for r in list(graph.iter_relationships())) == {"r1", "r2"}
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ class TestRemoveNode:
         # Removing n2 should cascade r1 (source=n2 in target) and r2 (source=n2)
         graph.remove_node(n2.id)
 
-        remaining_ids = {r.id for r in graph.relationships}
+        remaining_ids = {r.id for r in list(graph.iter_relationships())}
         assert remaining_ids == {"r3"}, f"Expected only r3, got {remaining_ids}"
 
 
@@ -187,7 +187,7 @@ class TestRemoveNodesByFile:
         graph.add_relationship(rel)
 
         graph.remove_nodes_by_file("src/a.py")
-        assert graph.relationships == []
+        assert list(graph.iter_relationships()) == []
 
 
 # ---------------------------------------------------------------------------

@@ -61,14 +61,14 @@ def _matches_default_patterns(path: Path) -> bool:
                 return True
     return False
 
-_pathspec_cache: dict[int, object] = {}
+_pathspec_cache: dict[tuple[str, ...], object] = {}
 
 def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
     """Check *path* against a list of gitignore-style patterns.
 
     Uses ``pathspec`` when available for full gitignore semantics; falls back to
     fnmatch per-pattern otherwise.  The compiled pathspec is cached by the
-    identity of the pattern list so it is only built once per session.
+    pattern content so it is only built once per unique pattern set.
     """
     if not gitignore_patterns:
         return False
@@ -76,7 +76,7 @@ def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
     try:
         import pathspec
 
-        cache_key = id(gitignore_patterns)
+        cache_key = tuple(gitignore_patterns)
         spec = _pathspec_cache.get(cache_key)
         if spec is None:
             spec = pathspec.PathSpec.from_lines("gitignore", gitignore_patterns)

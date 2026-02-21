@@ -76,7 +76,7 @@ class TestRunPipelineBasic:
     def test_run_pipeline_basic(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
-        result = run_pipeline(tmp_repo, storage)
+        _, result = run_pipeline(tmp_repo, storage)
 
         assert isinstance(result, PipelineResult)
         assert result.duration_seconds > 0.0
@@ -93,7 +93,7 @@ class TestRunPipelineFileCount:
     def test_run_pipeline_file_count(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
-        result = run_pipeline(tmp_repo, storage)
+        _, result = run_pipeline(tmp_repo, storage)
 
         assert result.files == 3
 
@@ -109,7 +109,7 @@ class TestRunPipelineFindsSymbols:
     def test_run_pipeline_finds_symbols(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
-        result = run_pipeline(tmp_repo, storage)
+        _, result = run_pipeline(tmp_repo, storage)
 
         assert result.symbols >= 3
 
@@ -125,7 +125,7 @@ class TestRunPipelineFindsRelationships:
     def test_run_pipeline_finds_relationships(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
-        result = run_pipeline(tmp_repo, storage)
+        _, result = run_pipeline(tmp_repo, storage)
 
         assert result.relationships > 0
 
@@ -263,7 +263,7 @@ class TestRunPipelineFullPhases:
     def test_run_pipeline_full_phases(
         self, rich_repo: Path, rich_storage: KuzuBackend
     ) -> None:
-        result = run_pipeline(rich_repo, rich_storage)
+        _, result = run_pipeline(rich_repo, rich_storage)
 
         # Basic sanity checks.
         assert isinstance(result, PipelineResult)
