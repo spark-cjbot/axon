@@ -111,7 +111,7 @@ Every edge carries a confidence score (1.0 = exact match, 0.8 = receiver method,
 Not just "zero callers" — a multi-pass analysis that understands your framework:
 
 1. **Initial scan** — flags symbols with no incoming calls
-2. **Exemptions** — entry points, exports, constructors, test code, dunder methods, `__init__.py` symbols, decorated functions, `@property` methods
+2. **Exemptions** — entry points, exports, constructors, test code, dunder methods, `__init__.py` symbols, decorated functions, `@property` methods, C# test files (`*Tests.cs`), ASP.NET/xUnit/NUnit attributes
 3. **Override pass** — un-flags methods overriding non-dead base class methods
 4. **Protocol conformance** — un-flags methods on Protocol-conforming classes
 5. **Protocol stubs** — un-flags all methods on Protocol classes (interface contracts)
@@ -123,6 +123,7 @@ Not just "zero callers" — a multi-pass analysis that understands your framewor
 Detects entry points using framework-aware patterns:
 - **Python**: `@app.route`, `@router.get`, `@click.command`, `test_*` functions, `__main__` blocks
 - **JavaScript/TypeScript**: Express handlers, exported functions, `handler`/`middleware` patterns
+- **C#**: `Main` method, ASP.NET attributes (`[HttpGet]`, `[Route]`, `[ApiController]`), test attributes (`[Fact]`, `[Test]`, `[TestMethod]`)
 
 Then traces BFS execution flows from each entry point through the call graph, classifying flows as intra-community or cross-community.
 
@@ -184,7 +185,7 @@ Symbols removed (1):
 
 **Noise Filtering**
 
-Built-in blocklist (138 entries) automatically filters language builtins (`print`, `len`, `isinstance`), JS/TS globals (`console`, `setTimeout`, `fetch`), React hooks (`useState`, `useEffect`), and common stdlib methods from the call graph. Your graph shows *your* code's relationships, not noise from `list.append()`.
+Built-in blocklist automatically filters language builtins (`print`, `len`, `isinstance`), JS/TS globals (`console`, `setTimeout`, `fetch`), React hooks (`useState`, `useEffect`), .NET BCL methods (`Console.WriteLine`, LINQ operators, `ToString`), and common stdlib methods from the call graph. Your graph shows *your* code's relationships, not noise from `list.append()`.
 
 ---
 
@@ -299,6 +300,7 @@ impact  -> "Tip: Review each affected symbol before making changes."
 | Python | `.py` | tree-sitter-python |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript |
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter-javascript |
+| C# | `.cs` | tree-sitter-c-sharp |
 
 ---
 
@@ -449,7 +451,7 @@ Examples:
 ## Architecture
 
 ```
-Source Code (.py, .ts, .js, .tsx, .jsx)
+Source Code (.py, .ts, .js, .tsx, .jsx, .cs)
     |
     v
 +----------------------------------------------+
