@@ -74,6 +74,19 @@ _CALL_BLOCKLIST: frozenset[str] = frozenset({
     "useState", "useEffect", "useRef", "useCallback", "useMemo",
     "useContext", "useReducer", "useLayoutEffect", "useImperativeHandle",
     "useDebugValue", "useId", "useTransition", "useDeferredValue",
+    # C# / .NET builtins and common BCL methods
+    "Console", "WriteLine", "ReadLine", "Write",
+    "ToString", "GetType", "Equals", "GetHashCode", "ReferenceEquals",
+    "Convert", "String", "Int32", "Int64", "Double", "Boolean", "Decimal",
+    "Math", "Guid", "DateTime", "TimeSpan", "Task", "Thread",
+    "Dispose", "GC", "Environment",
+    "Add", "Remove", "Contains", "Clear", "Count",
+    "Select", "Where", "OrderBy", "GroupBy", "First", "FirstOrDefault",
+    "ToList", "ToArray", "ToDictionary", "Any", "All",
+    "Concat", "Skip", "Take", "Distinct",
+    "ConfigureAwait", "GetAwaiter", "GetResult",
+    "AddSingleton", "AddScoped", "AddTransient",
+    "AddControllers", "AddSwaggerGen", "UseSwagger",
 })
 
 def resolve_call(

@@ -34,6 +34,20 @@ _PYTHON_DECORATOR_PATTERNS: tuple[str, ...] = (
     "@click.command",
 )
 
+_CSHARP_ATTRIBUTE_PATTERNS: tuple[str, ...] = (
+    "[HttpGet",
+    "[HttpPost",
+    "[HttpPut",
+    "[HttpDelete",
+    "[HttpPatch",
+    "[Route(",
+    "[ApiController",
+    "[Fact",
+    "[Test",
+    "[Theory",
+    "[TestMethod",
+)
+
 def find_entry_points(graph: KnowledgeGraph) -> list[GraphNode]:
     """Find functions/methods that serve as execution entry points.
 
@@ -114,6 +128,13 @@ def _matches_framework_pattern(node: GraphNode) -> bool:
             return True
         if node.is_exported:
             return True
+
+    if language in ("csharp", "c#", "") or node.file_path.endswith(".cs"):
+        if name == "Main":
+            return True
+        for pattern in _CSHARP_ATTRIBUTE_PATTERNS:
+            if pattern in content:
+                return True
 
     return False
 

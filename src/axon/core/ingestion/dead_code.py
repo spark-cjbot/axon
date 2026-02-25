@@ -21,7 +21,7 @@ _SYMBOL_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.CLASS,
 )
 
-_CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__"})
+_CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__", ".ctor"})
 
 def _is_test_class(name: str) -> bool:
     """Return ``True`` if *name* follows pytest class convention (``Test*``).
@@ -34,9 +34,14 @@ def _is_test_class(name: str) -> bool:
 def _is_test_file(file_path: str) -> bool:
     """Return ``True`` if the file is in a test directory or is a test file.
 
-    Matches paths containing ``/tests/`` or files named ``test_*.py``.
+    Matches paths containing ``/tests/`` or files named ``test_*.py``,
+    and C# test files (``*Tests.cs``, ``*Test.cs``).
     """
-    return "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py")
+    if "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py"):
+        return True
+    if file_path.endswith(("Tests.cs", "Test.cs")):
+        return True
+    return False
 
 def _is_dunder(name: str) -> bool:
     """Return ``True`` if *name* is a dunder (double-underscore) method.
@@ -73,6 +78,11 @@ _FRAMEWORK_DECORATOR_NAMES: frozenset[str] = frozenset({
     "fixture",
     "route", "endpoint", "command",
     "hybrid_property",
+    # C# / ASP.NET attributes
+    "HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch",
+    "Route", "ApiController", "Authorize", "AllowAnonymous",
+    "Fact", "Theory", "Test", "TestMethod", "SetUp", "TearDown",
+    "OneTimeSetUp", "OneTimeTearDown",
 })
 
 def _has_framework_decorator(node: GraphNode) -> bool:
