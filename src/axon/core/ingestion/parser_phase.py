@@ -122,6 +122,7 @@ def process_parsing(
     files: list[FileEntry],
     graph: KnowledgeGraph,
     max_workers: int = 8,
+    progress_callback: "Callable[[str, float], None] | None" = None,
 ) -> list[FileParseData]:
     """Parse every file and populate the knowledge graph with symbol nodes.
 
@@ -138,19 +139,35 @@ def process_parsing(
         graph: The knowledge graph to populate.  File nodes are expected to
             already exist (created by the structure phase).
         max_workers: Maximum number of threads for parallel parsing.
+        progress_callback: Optional ``(phase_name, pct)`` callback invoked as
+            files complete (``pct`` in ``[0.0, 1.0]``).
 
     Returns:
         A list of :class:`FileParseData` objects that carry the full parse
         results (imports, calls, heritage, type_refs) for use by later phases.
     """
-    # Phase 1: Parse all files in parallel.
+    from collections.abc import Callable
+    from concurrent.futures import as_completed
+
+    total = len(files)
+    all_parse_data: list[FileParseData | None] = [None] * total
+
+    # Phase 1: Parse all files in parallel with incremental progress reporting.
+    if total == 0:
+        return []
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        all_parse_data = list(
-            executor.map(
-                lambda f: parse_file(f.path, f.content, f.language),
-                files,
-            )
-        )
+        future_to_idx = {
+            executor.submit(parse_file, f.path, f.content, f.language): i
+            for i, f in enumerate(files)
+        }
+        completed = 0
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            all_parse_data[idx] = future.result()
+            completed += 1
+            if progress_callback is not None:
+                progress_callback("Parsing code", completed / total)
 
     # Phase 2: Graph mutation (sequential — not thread-safe).
     for file_entry, parse_data in zip(files, all_parse_data):

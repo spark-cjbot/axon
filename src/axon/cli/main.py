@@ -12,7 +12,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 from axon import __version__
 
@@ -129,17 +129,46 @@ def analyze(
     storage = KuzuBackend()
     storage.initialize(db_path)
 
+    # Phase weights (approximate relative cost of each phase).
+    # Each phase reports 0.0 → 1.0; we map that onto a global 0-100 scale.
+    _PHASE_WEIGHTS: dict[str, float] = {
+        "Walking files": 5,
+        "Processing structure": 3,
+        "Parsing code": 20,
+        "Resolving imports": 8,
+        "Tracing calls": 8,
+        "Extracting heritage": 5,
+        "Analyzing types": 5,
+        "Detecting communities": 5,
+        "Detecting execution flows": 5,
+        "Finding dead code": 3,
+        "Analyzing git history": 8,
+        "Loading to storage": 10,
+        "Generating embeddings": 15,
+    }
+    _TOTAL_WEIGHT = sum(_PHASE_WEIGHTS.values())
+
     result: PipelineResult | None = None
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[progress.description]{task.description:<30}"),
+        BarColumn(bar_width=30),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("Starting...", total=None)
+        task = progress.add_task("Starting...", total=_TOTAL_WEIGHT)
+
+        _phase_done: dict[str, float] = {}  # phase -> weight already credited
 
         def on_progress(phase: str, pct: float) -> None:
-            progress.update(task, description=f"{phase} ({pct:.0%})")
+            weight = _PHASE_WEIGHTS.get(phase, 2.0)
+            prev = _phase_done.get(phase, 0.0)
+            increment = weight * pct - prev
+            if increment > 0:
+                _phase_done[phase] = weight * pct
+                progress.update(task, description=phase, advance=increment)
 
         _, result = run_pipeline(
             repo_path=repo_path,

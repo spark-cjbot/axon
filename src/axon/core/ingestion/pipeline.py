@@ -120,8 +120,7 @@ def run_pipeline(
     report("Processing structure", 1.0)
 
     report("Parsing code", 0.0)
-    parse_data = process_parsing(files, graph)
-    report("Parsing code", 1.0)
+    parse_data = process_parsing(files, graph, progress_callback=report if progress_callback else None)
 
     report("Resolving imports", 0.0)
     process_imports(parse_data, graph)
@@ -168,7 +167,10 @@ def run_pipeline(
         if embeddings:
             try:
                 report("Generating embeddings", 0.0)
-                node_embeddings = embed_graph(graph)
+                node_embeddings = embed_graph(
+                    graph,
+                    progress_callback=report if progress_callback else None,
+                )
                 storage.store_embeddings(node_embeddings)
                 result.embeddings = len(node_embeddings)
                 report("Generating embeddings", 1.0)

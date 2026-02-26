@@ -46,6 +46,7 @@ def embed_graph(
     graph: KnowledgeGraph,
     model_name: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
+    progress_callback: "Callable[[str, float], None] | None" = None,
 ) -> list[NodeEmbedding]:
     """Generate embeddings for all embeddable nodes in the graph.
 
@@ -58,12 +59,16 @@ def embed_graph(
         model_name: The fastembed model identifier.  Defaults to
             ``"BAAI/bge-small-en-v1.5"``.
         batch_size: Number of texts to encode per batch.  Defaults to 64.
+        progress_callback: Optional ``(phase_name, pct)`` callback invoked
+            per batch (``pct`` in ``[0.0, 1.0]``).
 
     Returns:
         A list of :class:`NodeEmbedding` instances, one per embeddable node,
         each carrying the node's ID and its embedding vector as a plain
         Python ``list[float]``.
     """
+    from collections.abc import Callable
+
     nodes = [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
 
     if not nodes:
@@ -73,15 +78,27 @@ def embed_graph(
     texts = [generate_text(node, graph, class_method_idx) for node in nodes]
 
     model = _get_model(model_name)
-    vectors = list(model.embed(texts, batch_size=batch_size))
 
+    # Collect vectors batch-by-batch so we can report incremental progress.
+    total = len(texts)
     results: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, vectors):
-        results.append(
-            NodeEmbedding(
-                node_id=node.id,
-                embedding=vector.tolist(),
+    processed = 0
+
+    for batch_start in range(0, total, batch_size):
+        batch_texts = texts[batch_start : batch_start + batch_size]
+        batch_nodes = nodes[batch_start : batch_start + batch_size]
+        batch_vectors = list(model.embed(batch_texts, batch_size=batch_size))
+
+        for node, vector in zip(batch_nodes, batch_vectors):
+            results.append(
+                NodeEmbedding(
+                    node_id=node.id,
+                    embedding=vector.tolist(),
+                )
             )
-        )
+
+        processed += len(batch_texts)
+        if progress_callback is not None:
+            progress_callback("Generating embeddings", processed / total)
 
     return results
