@@ -160,15 +160,19 @@ def analyze(
     ) as progress:
         task = progress.add_task("Starting...", total=_TOTAL_WEIGHT)
 
-        _phase_done: dict[str, float] = {}  # phase -> weight already credited
+        phase_done: dict[str, float] = {}  # phase -> weight already credited
 
         def on_progress(phase: str, pct: float) -> None:
             weight = _PHASE_WEIGHTS.get(phase, 2.0)
-            prev = _phase_done.get(phase, 0.0)
+            prev = phase_done.get(phase, 0.0)
             increment = weight * pct - prev
             if increment > 0:
-                _phase_done[phase] = weight * pct
-                progress.update(task, description=phase, advance=increment)
+                phase_done[phase] = weight * pct
+                progress.update(
+                    task,
+                    description=f"{phase} ({pct:.0%})",
+                    advance=increment,
+                )
 
         _, result = run_pipeline(
             repo_path=repo_path,
