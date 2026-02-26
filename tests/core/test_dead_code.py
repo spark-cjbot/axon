@@ -506,3 +506,90 @@ class TestProtocolConformance:
         partial_method = g.get_node(partial_method_id)
         assert partial_method is not None
         assert partial_method.is_dead is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #1: C# interface methods falsely flagged as dead code
+# ---------------------------------------------------------------------------
+
+
+class TestSkipsCSharpInterfaceMethods:
+    """Methods declared on C# interface nodes must never be flagged as dead.
+
+    Interface method stubs have no body and no callers by design —
+    they are contracts, not implementations.
+    """
+
+    def _add_interface_node(self, graph: KnowledgeGraph, name: str) -> str:
+        """Add an INTERFACE node and return its ID."""
+        node_id = generate_id(NodeLabel.INTERFACE, "src/Service.cs", name)
+        graph.add_node(
+            GraphNode(
+                id=node_id,
+                label=NodeLabel.INTERFACE,
+                name=name,
+                file_path="src/Service.cs",
+            )
+        )
+        return node_id
+
+    def test_interface_method_not_flagged_dead(self) -> None:
+        g = KnowledgeGraph()
+        _add_file_node(g, "src/Service.cs")
+
+        self._add_interface_node(g, "IUserService")
+
+        # Method declared inside the interface
+        method_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Service.cs", "GetUser",
+            class_name="IUserService",
+        )
+
+        process_dead_code(g)
+
+        node = g.get_node(method_id)
+        assert node is not None
+        assert node.is_dead is False, "Interface method stubs must not be flagged dead"
+
+    def test_multiple_interface_methods_not_flagged(self) -> None:
+        g = KnowledgeGraph()
+        _add_file_node(g, "src/Repo.cs")
+
+        self._add_interface_node(g, "IRepository")
+
+        m1_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Repo.cs", "GetAll",
+            class_name="IRepository",
+        )
+        m2_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Repo.cs", "Save",
+            class_name="IRepository",
+        )
+
+        process_dead_code(g)
+
+        assert g.get_node(m1_id).is_dead is False
+        assert g.get_node(m2_id).is_dead is False
+
+    def test_concrete_class_method_with_same_name_still_evaluated(self) -> None:
+        """A concrete class method with the same name as an interface method
+        is still evaluated normally (not auto-exempted)."""
+        g = KnowledgeGraph()
+        _add_file_node(g, "src/Repo.cs")
+
+        self._add_interface_node(g, "IRepository")
+
+        # Concrete class (CLASS node, not INTERFACE)
+        _add_symbol_node(g, NodeLabel.CLASS, "src/Repo.cs", "UserRepository")
+
+        concrete_method_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Repo.cs", "GetAll",
+            class_name="UserRepository",
+        )
+
+        process_dead_code(g)
+
+        # Concrete method has no callers and no entry point — it IS dead
+        node = g.get_node(concrete_method_id)
+        assert node is not None
+        assert node.is_dead is True, "Concrete class methods are still evaluated normally"

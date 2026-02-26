@@ -30,6 +30,7 @@ _KIND_TO_LABEL: dict[str, NodeLabel] = {
     "function": NodeLabel.FUNCTION,
     "class": NodeLabel.CLASS,
     "method": NodeLabel.METHOD,
+    "constructor": NodeLabel.METHOD,  # C# constructors stored as METHOD with name ".ctor"
     "interface": NodeLabel.INTERFACE,
     "type_alias": NodeLabel.TYPE_ALIAS,
     "enum": NodeLabel.ENUM,
@@ -173,11 +174,11 @@ def process_parsing(
                 )
                 continue
 
-            # For methods, use "ClassName.method_name" as the symbol name
+            # For methods (and constructors), use "ClassName.method_name" as the symbol name
             # to disambiguate methods across different classes.
             symbol_name = (
                 f"{symbol.class_name}.{symbol.name}"
-                if symbol.kind == "method" and symbol.class_name
+                if symbol.kind in ("method", "constructor") and symbol.class_name
                 else symbol.name
             )
 

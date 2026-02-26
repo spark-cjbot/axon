@@ -415,23 +415,30 @@ class CSharpParser(LanguageParser):
         result: ParseResult,
         class_name: str,
     ) -> None:
-        """Extract a constructor declaration."""
+        """Extract a constructor declaration.
+
+        Constructors are stored with the name ``".ctor"`` (rather than the
+        class name) so that ``context("ClassName")`` returns only the class
+        node and not a duplicate method node with the same name.  The
+        original class name is still present in ``class_name`` and in the
+        ``signature`` field.
+        """
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
 
-        name = name_node.text.decode("utf8")
+        class_ctor_name = name_node.text.decode("utf8")
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
         node_content = content[node.start_byte : node.end_byte]
 
-        # Constructors are named after the class — use ".ctor" convention
-        signature = self._build_constructor_signature(node, name)
+        # Use ".ctor" as the canonical name to avoid collision with the class node.
+        signature = self._build_constructor_signature(node, class_ctor_name)
 
         result.symbols.append(
             SymbolInfo(
-                name=name,
-                kind="method",
+                name=".ctor",
+                kind="constructor",
                 start_line=start_line,
                 end_line=end_line,
                 content=node_content,

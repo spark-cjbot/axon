@@ -281,6 +281,40 @@ def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
 
     return cleared
 
+
+def _clear_interface_method_false_positives(graph: KnowledgeGraph) -> int:
+    """Un-flag methods declared on C# (or other) interface nodes.
+
+    Interface method stubs are contracts — they have no body and are never
+    called directly.  Flagging them as dead is always a false positive.
+
+    Collects all INTERFACE node names, then clears ``is_dead`` on any
+    METHOD whose ``class_name`` matches one of those interfaces.
+
+    Returns the number of methods un-flagged.
+    """
+    interface_names: set[str] = set()
+    for iface_node in graph.get_nodes_by_label(NodeLabel.INTERFACE):
+        interface_names.add(iface_node.name)
+
+    if not interface_names:
+        return 0
+
+    cleared = 0
+    for method in graph.get_nodes_by_label(NodeLabel.METHOD):
+        if not method.is_dead or not method.class_name:
+            continue
+        if method.class_name in interface_names:
+            method.is_dead = False
+            cleared += 1
+            logger.debug(
+                "Un-flagged interface method stub: %s.%s",
+                method.class_name,
+                method.name,
+            )
+
+    return cleared
+
 def process_dead_code(graph: KnowledgeGraph) -> int:
     """Detect dead (unreachable) symbols and flag them in the graph.
 
@@ -351,5 +385,9 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
     # Fourth pass: un-flag Protocol class stubs (interface contracts, never called directly).
     stub_cleared = _clear_protocol_stub_false_positives(graph)
     dead_count -= stub_cleared
+
+    # Fifth pass: un-flag C# interface method declarations (never have a body or callers).
+    iface_cleared = _clear_interface_method_false_positives(graph)
+    dead_count -= iface_cleared
 
     return dead_count

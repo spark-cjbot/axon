@@ -131,6 +131,16 @@ def resolve_call(
         if result is not None:
             return result, 1.0
 
+    # When an explicit non-self receiver is present (e.g. ``_repo.GetAll()``),
+    # skip the global fuzzy match.  The receiver indicates a method call on a
+    # specific object whose type we don't statically know here; a name-only
+    # global match would create spurious self-loops (GetAll → GetAll) when
+    # the called name happens to equal a method in the same class.
+    # The CALLS edge for receiver methods is created separately by
+    # ``_resolve_receiver_method`` in ``process_calls``.
+    if receiver and receiver not in ("self", "this"):
+        return None, 0.0
+
     # Without type info the receiver doesn't help — fall through to name-based resolution.
     candidate_ids = call_index.get(name, [])
     if not candidate_ids:

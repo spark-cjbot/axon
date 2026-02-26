@@ -584,3 +584,69 @@ class TestCallBlocklist:
         process_calls(parse_data, g)
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #3: Same-name call self-loops suppressed via receiver field
+# ---------------------------------------------------------------------------
+
+
+class TestNoSelfLoopOnReceiverCall:
+    """When receiver is set (non-self), global fuzzy match is skipped to
+    avoid self-loops like GetAll → GetAll."""
+
+    def test_receiver_call_no_self_loop(self) -> None:
+        """UserService.GetAll calling _repo.GetAll must not create a self-loop."""
+        g = KnowledgeGraph()
+        _add_file_node(g, "src/Service.cs")
+
+        # UserService class + GetAll method
+        _add_symbol_node(g, NodeLabel.CLASS, "src/Service.cs", "UserService", 1, 40)
+        get_all_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Service.cs", "GetAll", 5, 20,
+            class_name="UserService",
+        )
+
+        # The _repo field is typed as UserRepository (exists in another file)
+        _add_file_node(g, "src/Repo.cs")
+        _add_symbol_node(g, NodeLabel.CLASS, "src/Repo.cs", "UserRepository", 1, 30)
+        repo_get_all_id = _add_symbol_node(
+            g, NodeLabel.METHOD, "src/Repo.cs", "GetAll", 5, 20,
+            class_name="UserRepository",
+        )
+
+        # Parse data: inside UserService.GetAll, call _repo.GetAll()
+        parse_data = [
+            FileParseData(
+                file_path="src/Service.cs",
+                language="csharp",
+                parse_result=ParseResult(
+                    calls=[CallInfo(name="GetAll", line=10, receiver="_repo")],
+                ),
+            ),
+        ]
+
+        process_calls(parse_data, g)
+
+        calls_rels = g.get_relationships_by_type(RelType.CALLS)
+        # There may be a CALLS edge via _resolve_receiver_method if receiver
+        # matches a class name, but there must NOT be a self-loop.
+        for rel in calls_rels:
+            assert not (rel.source == get_all_id and rel.target == get_all_id), (
+                "Self-loop GetAll → GetAll must not be created"
+            )
+
+    def test_receiver_call_skips_global_fuzzy(self) -> None:
+        """resolve_call returns (None, 0.0) when receiver is non-self."""
+        g = KnowledgeGraph()
+        _add_file_node(g, "src/a.py")
+        _add_symbol_node(g, NodeLabel.FUNCTION, "src/a.py", "process", 1, 10)
+        _add_symbol_node(g, NodeLabel.FUNCTION, "src/a.py", "helper", 12, 20)
+
+        index = build_name_index(g, _CALLABLE_LABELS)
+        call = CallInfo(name="helper", line=5, receiver="some_object")
+
+        target_id, confidence = resolve_call(call, "src/a.py", index, g)
+
+        assert target_id is None
+        assert confidence == 0.0

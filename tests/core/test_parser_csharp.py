@@ -50,8 +50,9 @@ class TestParseClass:
 
     def test_method_count(self, parser: CSharpParser) -> None:
         result = parser.parse(self.CODE, "User.cs")
+        # Constructor is now kind="constructor", not "method" — only Save remains.
         methods = [s for s in result.symbols if s.kind == "method"]
-        assert len(methods) == 2
+        assert len(methods) == 1
 
     def test_method_class_name(self, parser: CSharpParser) -> None:
         result = parser.parse(self.CODE, "User.cs")
@@ -61,8 +62,22 @@ class TestParseClass:
 
     def test_method_names(self, parser: CSharpParser) -> None:
         result = parser.parse(self.CODE, "User.cs")
+        # Constructor is now stored as kind="constructor" with name=".ctor"
         method_names = {s.name for s in result.symbols if s.kind == "method"}
-        assert method_names == {"User", "Save"}
+        assert method_names == {"Save"}
+
+    def test_constructor_kind(self, parser: CSharpParser) -> None:
+        result = parser.parse(self.CODE, "User.cs")
+        ctors = [s for s in result.symbols if s.kind == "constructor"]
+        assert len(ctors) == 1
+        assert ctors[0].name == ".ctor"
+        assert ctors[0].class_name == "User"
+
+    def test_constructor_signature_contains_class_name(self, parser: CSharpParser) -> None:
+        result = parser.parse(self.CODE, "User.cs")
+        ctors = [s for s in result.symbols if s.kind == "constructor"]
+        assert len(ctors) == 1
+        assert "User" in ctors[0].signature
 
     def test_public_class_is_exported(self, parser: CSharpParser) -> None:
         result = parser.parse(self.CODE, "User.cs")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import logging
 import tempfile
 from collections import deque
@@ -50,6 +51,7 @@ _NODE_PROPERTIES = (
     "is_dead BOOL, "
     "is_entry_point BOOL, "
     "is_exported BOOL, "
+    "decorators STRING, "
     "PRIMARY KEY (id)"
 )
 
@@ -652,6 +654,8 @@ class KuzuBackend:
 
         Returns True on success, False if COPY FROM is not available.
         """
+
+
         by_table: dict[str, list[GraphNode]] = {}
         for node in graph.iter_nodes():
             table = _LABEL_TO_TABLE.get(node.label.value)
@@ -664,7 +668,8 @@ class KuzuBackend:
                     [node.id, node.name, node.file_path, node.start_line,
                      node.end_line, node.content, node.signature, node.language,
                      node.class_name, node.is_dead, node.is_entry_point,
-                     node.is_exported]
+                     node.is_exported,
+                     json.dumps(node.properties.get("decorators", []))]
                     for node in nodes
                 ])
             return True
@@ -781,6 +786,11 @@ class KuzuBackend:
             logger.warning("Unknown label %s for node %s", node.label, node.id)
             return
 
+
+
+        decorators_raw = node.properties.get("decorators", [])
+        decorators_str = json.dumps(decorators_raw) if decorators_raw else "[]"
+
         query = (
             f"CREATE (:{table} {{"
             f"id: $id, name: $name, file_path: $file_path, "
@@ -788,7 +798,7 @@ class KuzuBackend:
             f"content: $content, signature: $signature, "
             f"language: $language, class_name: $class_name, "
             f"is_dead: $is_dead, is_entry_point: $is_entry_point, "
-            f"is_exported: $is_exported"
+            f"is_exported: $is_exported, decorators: $decorators"
             f"}})"
         )
         params = {
@@ -804,6 +814,7 @@ class KuzuBackend:
             "is_dead": node.is_dead,
             "is_entry_point": node.is_entry_point,
             "is_exported": node.is_exported,
+            "decorators": decorators_str,
         }
         try:
             self._conn.execute(query, parameters=params)
@@ -898,12 +909,27 @@ class KuzuBackend:
         Column order matches the property definition:
         0=id, 1=name, 2=file_path, 3=start_line, 4=end_line,
         5=content, 6=signature, 7=language, 8=class_name,
-        9=is_dead, 10=is_entry_point, 11=is_exported
+        9=is_dead, 10=is_entry_point, 11=is_exported, 12=decorators
         """
+
+
         try:
             nid = node_id or row[0]
             prefix = nid.split(":", 1)[0]
             label = _LABEL_MAP.get(prefix, NodeLabel.FILE)
+
+            # Deserialize decorators JSON string back to a list (may be absent in
+            # older databases that predate this column).
+            decorators: list[str] = []
+            if len(row) > 12 and row[12]:
+                try:
+                    decorators = json.loads(row[12])
+                except (ValueError, TypeError):
+                    decorators = []
+
+            props: dict[str, Any] = {}
+            if decorators:
+                props["decorators"] = decorators
 
             return GraphNode(
                 id=row[0],
@@ -919,6 +945,7 @@ class KuzuBackend:
                 is_dead=bool(row[9]),
                 is_entry_point=bool(row[10]),
                 is_exported=bool(row[11]),
+                properties=props,
             )
         except (IndexError, KeyError):
             logger.debug("Failed to convert row to GraphNode: %s", row, exc_info=True)

@@ -327,3 +327,73 @@ class TestMultipleLabels:
         assert backend.get_node(cls.id) is not None
         assert backend.get_node(fn.id).label == NodeLabel.FUNCTION
         assert backend.get_node(cls.id).label == NodeLabel.CLASS
+
+
+# ---------------------------------------------------------------------------
+# Issue #4: C# attributes stored as graph properties (decorators column)
+# ---------------------------------------------------------------------------
+
+
+class TestDecoratorsColumn:
+    """decorators are persisted as a JSON-encoded STRING column and
+    round-trip correctly through add_nodes / get_node."""
+
+    def test_decorators_roundtrip_via_insert(self, backend: KuzuBackend) -> None:
+        """A node with decorators survives an insert → get_node round-trip."""
+        node = GraphNode(
+            id=generate_id(NodeLabel.METHOD, "src/Api.cs", "UsersController.GetAll"),
+            label=NodeLabel.METHOD,
+            name="GetAll",
+            file_path="src/Api.cs",
+            properties={"decorators": ["HttpGet", "Route"]},
+        )
+        backend.add_nodes([node])
+
+        result = backend.get_node(node.id)
+        assert result is not None
+        assert result.properties.get("decorators") == ["HttpGet", "Route"]
+
+    def test_decorators_empty_list_roundtrip(self, backend: KuzuBackend) -> None:
+        """A node with no decorators returns an empty list (not None)."""
+        node = _make_node(name="plain_func", file_path="src/b.cs")
+        backend.add_nodes([node])
+
+        result = backend.get_node(node.id)
+        assert result is not None
+        # Empty decorators — either absent or empty list, never erroring.
+        decorators = result.properties.get("decorators", [])
+        assert decorators == []
+
+    def test_decorators_roundtrip_via_bulk_load(self, backend: KuzuBackend) -> None:
+        """Decorators survive bulk_load → get_node round-trip (CSV path)."""
+        graph = KnowledgeGraph()
+        node = GraphNode(
+            id=generate_id(NodeLabel.FUNCTION, "src/ctrl.cs", "Index"),
+            label=NodeLabel.FUNCTION,
+            name="Index",
+            file_path="src/ctrl.cs",
+            properties={"decorators": ["HttpGet", "Authorize"]},
+        )
+        graph.add_node(node)
+        backend.bulk_load(graph)
+
+        result = backend.get_node(node.id)
+        assert result is not None
+        assert result.properties.get("decorators") == ["HttpGet", "Authorize"]
+
+    def test_decorators_queryable_via_raw_cypher(self, backend: KuzuBackend) -> None:
+        """The decorators STRING column is queryable via Cypher CONTAINS."""
+        node = GraphNode(
+            id=generate_id(NodeLabel.METHOD, "src/ctrl.cs", "Ctrl.Post"),
+            label=NodeLabel.METHOD,
+            name="Post",
+            file_path="src/ctrl.cs",
+            properties={"decorators": ["HttpPost", "Authorize"]},
+        )
+        backend.add_nodes([node])
+
+        rows = backend.execute_raw(
+            "MATCH (n:Method) WHERE n.decorators CONTAINS 'HttpPost' RETURN n.name"
+        )
+        assert len(rows) == 1
+        assert rows[0][0] == "Post"
